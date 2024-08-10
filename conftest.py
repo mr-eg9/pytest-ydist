@@ -1,19 +1,108 @@
 from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Iterable, NewType, Type
 import abc
-from typing import Any, NewType
 import enum
-import time
+from collections import deque
 
 import pytest
-import collections
-from dataclasses import dataclass
+
+# ------------------------------------------------------------------------------
+# Main objects
+# ------------------------------------------------------------------------------
 
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config):
     session = Session(config)
     config.pluginmanager.register(session, 'dsession')
 
-WorkerId = NewType('WorkerId', int)
+class ScheduleTracker:
+    """Utility object to help a scheduler keep track of and schedule commands."""
+    def __init__(self):
+        self.worker_commands: dict[WorkerId, deque[Command]] = {}
+        self.worker_next_seq_nr: dict[WorkerId, SeqNr] = {}
+
+    def add_worker(self, worker_id: WorkerId):
+        assert worker_id not in self.worker_commands
+        assert worker_id not in self.worker_next_seq_nr
+        self.worker_commands[worker_id] = deque()
+        self.worker_next_seq_nr[worker_id] = SeqNr(0)
+
+    def remove_worker(self, worker_id: WorkerId) -> deque[Command]:
+        assert worker_id in self.worker_commands
+        return self.worker_commands.pop(worker_id)
+
+    def worker_ids(self) -> Iterable[WorkerId]:
+        return self.worker_commands.keys()
+
+    def get_commands(self, worker) -> deque[Command]:
+        return self.worker_commands[worker]
+
+    def clear_command(self, worker_id: WorkerId, seq_nr: SeqNr):
+        idx = self.get_command_idx(worker_id, seq_nr)
+        del self.worker_commands[worker_id][idx]
+
+    def update_command_status(self, worker_id: WorkerId, seq_nr: SeqNr, status: CommandStatus):
+        idx = self.get_command_idx(worker_id, seq_nr)
+        self.worker_commands[worker_id][idx].status = status
+
+    def schedule_command(
+        self,
+        schedule: Schedule,
+        worker_id: WorkerId,
+        command_cls: Type[Command],
+        *args,
+        **kwargs,
+    ) -> SeqNr:
+        seq_nr = self.worker_next_seq_nr[worker_id]
+        command = command_cls(seq_nr, worker_id, CommandStatus.Pending, *args, **kwargs)
+        self.worker_next_seq_nr[worker_id] = SeqNr(seq_nr + 1)
+        schedule.new_commands.append(command)
+        self.worker_commands[worker_id].append(command)
+        return seq_nr
+
+    def schedule_cancelation(self, schedule: Schedule, worker_id, seq_nr: SeqNr, abort: bool):
+        # TODO: Should we track reqested cancelations?
+        schedule.cancelations.append(Cancelation(worker_id=worker_id, seq_nr=seq_nr, abort=abort))
+
+    def get_command_idx(self, worker_id, seq_nr) -> int:
+        for i, command in enumerate(self.worker_commands[worker_id]):
+            if command.seq_nr == seq_nr:
+                return i
+        raise StopIteration(f'Could not find index for command with worker_id {worker_id} seq_nr {seq_nr}')
+
+    def get_command_in_progress(self, worker_id) -> Command | None:
+        for command in self.worker_commands[worker_id]:
+            if command.status == CommandStatus.InProgress:
+                return command
+
+
+@dataclass
+class Schedule:
+    new_commands: list[Command] = field(default_factory=lambda: [])
+    cancelations: list[Cancelation] = field(default_factory=lambda: [])
+
+
+class Scheduler(abc.ABC):
+
+    @abc.abstractmethod
+    def __init__(self, items, workers):
+        pass
+
+    @abc.abstractmethod
+    def is_done(self) -> bool:
+        pass
+
+    @abc.abstractmethod
+    def reschedule(self) -> Schedule:
+        pass
+
+    @abc.abstractmethod
+    def notify(self, event: Event) -> bool:
+        pass
+
+
 
 class Session:
     """The `Session` instance used by this plugin"""
@@ -26,20 +115,22 @@ class Session:
 
         This procedure forms the backbone of the concurrency model here.
         """
-        workers = self.init_workers()
-        scheduler = self.init_scheduler(session.items)
+        workers = self.init_workers(session, self.config)
+        scheduler = self.init_scheduler(session, self.config)
+        # Handle initial `WorkerCreated` events
+        self.handle_events(workers, scheduler)
 
         should_reschedule = True
-        self.handle_events(workers, scheduler)  # Let scheduler know that workers are populated
 
         while not scheduler.is_done():
             if should_reschedule:
                 should_reschedule = False
 
                 all_idle = self._is_all_workers_idle(workers)
-                schedule = scheduler.reschedule(session.items)
-                if all_idle and not self._any_new_items_scheduled(schedule):
+                schedule = scheduler.reschedule()
+                if all_idle and len(schedule.new_commands) == 0:
                     raise RuntimeError('Deadlock, due to no items scheduled when all workers idle')
+
                 self.submit_work(workers, schedule)
             self.wait_for_event()
             should_reschedule |= self.handle_events(workers, scheduler)
@@ -48,27 +139,24 @@ class Session:
         return True
 
     # Could be a hook
-    def init_workers(self) -> dict[WorkerId, WorkerM]:
-        workers = {}
-        for i in range(4):
-            worker = StupidWorker(self.config)
-            workers[WorkerId(i)] = worker
-        return workers
+    def init_workers(self, session, config) -> dict[WorkerId, Worker]:
+        return {WorkerId(i): SyncWorker(i, session, config) for i in range(2)}
 
     # Could be a hook
-    def init_scheduler(self, items) -> Scheduler:
-        return StupidScheduler(self.config)
+    def init_scheduler(self, session, config) -> Scheduler:
+        return RoundRobinScheduler(session, config)
 
     def wait_for_event(self):
         # TODO: Wait on a multiproccessing.Event, that will be set by the workers
         ...
 
-    def submit_work(self, workers, schedule):
-        for worker_idx, worker_schedule in schedule.items():
-            for command in worker_schedule:
-                workers[worker_idx].submit_command(command)
+    def submit_work(self, workers: dict[WorkerId, Worker], schedule: Schedule):
+        for cancellation in schedule.cancelations:
+            workers[cancellation.worker_id].submit_cancellation(cancellation)
+        for new_command in schedule.new_commands:
+            workers[new_command.worker_id].submit_new_command(new_command)
 
-    def handle_events(self, workers, scheduler) -> bool:
+    def handle_events(self, workers: dict[WorkerId, Worker], scheduler: Scheduler) -> bool:
         """Handle incoming events.
 
         Some event types are handled inside the session, such as `WorkerDied` or `WorkerFinished`.
@@ -77,9 +165,8 @@ class Session:
         Return value indicates whether a rescheduling has been requested.
         """
         reschedule = False
-        for worker_id, worker in workers.items():
-            while (event:=worker.get_event()) is not None:
-                event.worker_id = worker_id
+        for worker in workers.values():
+            while (event:=worker.pop_event()) is not None:
                 reschedule |= scheduler.notify(event)
         return reschedule
 
@@ -87,28 +174,22 @@ class Session:
     def _is_all_workers_idle(workers):
         return all(worker.is_idle() for worker in workers.values())
 
-    @staticmethod
-    def _any_new_items_scheduled(schedule) -> bool:
-        for worker_schedule in schedule.values():
-            if any(command.status == CommandStatus.Created for command in worker_schedule ):
-                return True
-        return False
+class Worker(abc.ABC):
 
-class WorkerM(abc.ABC):
-    """A worker that is capable of running tests.
-
-    Should have control functions to allow control of the test execution.
-    """
     @abc.abstractmethod
-    def __init__(self, config):
+    def __init__(self, id, config, items):
         pass
 
     @abc.abstractmethod
-    def submit_command(self, command: Command):
+    def submit_new_command(self, command: Command):
         pass
 
     @abc.abstractmethod
-    def shutdown(self):
+    def submit_cancellation(self, cancellation: Cancelation):
+        pass
+
+    @abc.abstractmethod
+    def pop_event(self) -> Event | None:
         pass
 
     @abc.abstractmethod
@@ -116,211 +197,183 @@ class WorkerM(abc.ABC):
         pass
 
 
-class Scheduler(abc.ABC):
-    @abc.abstractmethod
-    def notify(self, event) -> bool:
-        """Notify the scheduler an event generated in workers.
-
-        Return value is used to notify the Session that the scheduler wishes to reschedule.
-        """
-        pass
-
-    @abc.abstractmethod
-    def is_done(self) -> bool:
-        """Determine if the scheduler believes test execution is complete."""
-        ...
-
-    @abc.abstractmethod
-    def reschedule(self, items) -> dict:
-        """Request that the scheduler (re)schedules the test execution.
-
-        This will be called by the session in case of a worker crash, or if the scheduler
-        requests a rescheduling in the `notify` method.
-
-        Returns a `Schedule` which defines how the tests are to be distributed between nodes.
-        """
-        ...
-
-
-class StupidWorker(WorkerM):
-
-    def __init__(self, config):
+class SyncWorker(Worker):
+    def __init__(self, id, session, config):
+        self.id = id
         self.config = config
-        self.events = collections.deque()
-        self.events.append(WorkerStarted(id))
-        self.schedule = []
+        self.items = session.items
+        self.events: deque[Event] = deque()
         self.pending_test = None
-        self.next_sched_seq_nr = 0
-        self.next_completed_seq_nr = 0
-        self._shutdown = False
+        self._register_event(WorkerStarted)
 
-    def submit_command(self, command: Command):
-        assert command.seq_nr == self.next_sched_seq_nr
-        assert not self._shutdown
-        self.schedule.append(command)
-        self.next_sched_seq_nr += 1
+    def submit_new_command(self, command: Command):
+        self._register_event(CommandChangedStatus, command.seq_nr, CommandStatus.InProgress)
+        match command:
+            case RunTests():
+                self._exec_run_tests(command)
+            case ShutdownWorker():
+                self._exec_shutdown()
+        self._register_event(CommandChangedStatus, command.seq_nr, CommandStatus.Completed)
 
-        if isinstance(command, RuntestCommand):
+    def submit_cancellation(self, cancellation: Cancelation):
+        _ = cancellation
+        # No point in cancelleation here, because this is all synchronous, scheduler will see a
+        # `CommandStatus.Completed` which may also happen in asynchronous code
+        pass
 
-            # NOTE: Concurrent scheduler would transmit the command here, and the rest of this
-            #  function would typically run on separate thread/ps
-
-            command.status = CommandStatus.Pending
-            if len(command.tests) == 0:
-                return
-            if self.pending_test is not None:
-                self._exec_test(self.pending_test, command.tests[0])
-            for i in range(len(command.tests) - 1):
-                self._exec_test(command.tests[i], command.tests[i+1])
-            self.pending_test = command.tests[-1]
-            self.events.append(CommandComplete(None, command))
-            command.status = CommandStatus.Completed
-        if isinstance(command, ShutdownCommand):
-            command.status = CommandStatus.Pending
-            if self.pending_test is not None:
-                self._exec_test(self.pending_test, None)
-            self.events.append(CommandComplete(None, command))
-            command.status = CommandStatus.Completed
-            self.shutdown()
-
-    def get_event(self) -> Event | None:
-        if len(self.events) == 0:
-            return None
-        event = self.events.popleft()
-
-        if isinstance(event, CommandComplete):
-            assert event.command == self.schedule[self.next_completed_seq_nr]
-            self.next_completed_seq_nr += 1
-        return event
-
-    def shutdown(self):
-        self._shutdown = True
-        self.events.append(WorkerShutdown(None))
+    def pop_event(self) -> Event | None:
+        if self.events:
+            return self.events.popleft()
 
     def is_idle(self) -> bool:
-        all_commands_completed = self.next_sched_seq_nr == self.next_completed_seq_nr
-        all_events_read = len(self.events) == 0
-        return all_events_read and all_commands_completed
+        return True
 
-    def _exec_test(self, test, test_next):
+    def _exec_shutdown(self):
+        if self.pending_test is not None:
+            self._exec_test(self.pending_test, None)
+        self._register_event(WorkerShutdown)
+
+    def _exec_run_tests(self, command: RunTests):
+        num_tests = len(command.tests)
+        if num_tests == 0:
+            return
+        if self.pending_test is not None:
+            self._exec_test(self.pending_test, command.tests[0])
+        for i in range(num_tests - 1):
+            self._exec_test(command.tests[i], command.tests[i + 1])
+        self.pending_test = command.tests[-1]
+
+    def _exec_test(self, test_idx: TestIdx, test_next_idx: TestIdx | None):
+        test = self.items[test_idx]
+        test_next = self.items[test_next_idx] if test_next_idx is not None else None
         self.config.hook.pytest_runtest_protocol(item=test, nextitem=test_next)
-        self.events.append(TestComplete(None, test))
+        self._register_event(TestComplete, test_idx)
 
-class StupidScheduler(Scheduler):
+    def _register_event(self, event_cls: Type[Event], *args, **kwargs):
+        self.events.append(event_cls(self.id, *args, **kwargs))
+        # TODO: Set the events flag in session
 
-    def __init__(self, config):
+
+class RoundRobinScheduler(Scheduler):
+    def __init__(self, session, config):
         self.config = config
-        self.remaining_tests = []
-        self.workers = []
-        self.worker_curr_seq_nr = {}
-        self.started = False
+        self.unscheduled_items = deque(range(len(session.items)))
+        self.schedule_tracker = ScheduleTracker()
 
     def is_done(self) -> bool:
-        return self.started and len(self.remaining_tests) == 0
+        return len(self.unscheduled_items) == 0 and len(list(self.schedule_tracker.worker_ids())) == 0
 
-    def reschedule(self, items) -> dict:
-        if not self.started:
-            self.started = True
-            self.remaining_tests = items
-        if not self.workers:
-            return {}
-        schedule = {worker: [self._shutdown_command(worker)] for worker in self.workers[1:]}
-        first_worker = self.workers[0]
-        schedule[first_worker] = [  # type: ignore
-            self._runtest_command(first_worker, self.remaining_tests),
-            self._shutdown_command(first_worker)
-        ]
+    def reschedule(self) -> Schedule:
+        schedule = Schedule()
+
+        for worker_id in self.schedule_tracker.worker_ids():
+            if len(self.schedule_tracker.get_commands(worker_id)) == 0:
+                if len(self.unscheduled_items) == 0:
+                    self.schedule_tracker.schedule_command(schedule, worker_id, ShutdownWorker)
+                else:
+                    test_to_run = self.unscheduled_items.popleft()
+                    self.schedule_tracker.schedule_command(schedule, worker_id, RunTests, [test_to_run])
         return schedule
 
-    def notify(self, event) -> bool:
-        print(f'received event: {event}')
-        reschedule = False
-        worker_id = event.worker_id
-
+    def notify(self, event: Event) -> bool:
         if isinstance(event, WorkerStarted):
-            self.workers.append(worker_id)
-            self.worker_curr_seq_nr[worker_id] = 0
-            reschedule = True
+            self.schedule_tracker.add_worker(event.worker_id)
+            return True
 
         if isinstance(event, WorkerShutdown):
-            self.workers.remove(event.worker_id)
-            self.worker_curr_seq_nr.pop(event.worker_id)
+            remaining_commands = self.schedule_tracker.remove_worker(event.worker_id)
+            match remaining_commands:
+                case [ShutdownCommand]:
+                    pass
+                case _:
+                    raise RuntimeError('Worker unexpectedly shut down while there were remaining items')
+            return False
+
+        if isinstance(event, CommandChangedStatus):
+            if event.worker_id not in self.schedule_tracker.worker_ids():
+                # This is a shutdown event
+                return False
+            self.schedule_tracker.update_command_status(event.worker_id, event.seq_nr, event.new_status)
+            if event.new_status == CommandStatus.Aborted:
+                raise NotImplementedError('Error handling not yet implemented')
+            elif event.new_status == CommandStatus.Completed:
+                # TODO: We might need to handle the case where we requested to cancel this command
+                self.schedule_tracker.clear_command(event.worker_id, event.seq_nr)
+                # This is round-robin, so we know there is only 1 command in the queue
+                return True
 
         if isinstance(event, TestComplete):
-            self.remaining_tests.remove(event.test_id)
+            pass
 
-        return reschedule
+        return False
 
-    def _runtest_command(self, worker, tests):
-        command = RuntestCommand(
-            worker,
-            self._get_next_seq_nr(worker),
-            CommandStatus.Created,
-            tests,
-        )
-        return command
+# ------------------------------------------------------------------------------
+# Commands
+# ------------------------------------------------------------------------------
 
-    def _shutdown_command(self, worker):
-        command = ShutdownCommand(
-            worker,
-            self._get_next_seq_nr(worker),
-            CommandStatus.Created
-        )
-        return command
 
-    def _get_next_seq_nr(self, worker):
-        seq_nr = self.worker_curr_seq_nr[worker]
-        self.worker_curr_seq_nr[worker] = seq_nr + 1
-        return seq_nr
+SeqNr = NewType('SeqNr', int)
+WorkerId = NewType('WorkerId', int)
+TestIdx = NewType('TestIdx', int)
+
 
 @dataclass
-class Event(abc.ABC):
-    worker_id: Any
+class Cancelation:
+    worker_id: WorkerId
+    seq_nr: SeqNr
+    abort: bool
 
-@dataclass
-class WorkerStarted(Event):
-    worker_id: Any
-
-@dataclass
-class WorkerShutdown(Event):
-    worker_id: Any
-
-@dataclass
-class TestComplete(Event):
-    worker_id: Any
-    test_id: Any
-
-@dataclass
-class CommandComplete(Event):
-    command: Command
 
 @dataclass
 class Command(abc.ABC):
+    seq_nr: SeqNr
     worker_id: WorkerId
-    seq_nr: int
     status: CommandStatus
 
-@dataclass
-class ShutdownCommand(Command):
-    worker_id: WorkerId
-    seq_nr: int
-    status: CommandStatus
 
 @dataclass
-class RuntestCommand(Command):
-    worker_id: WorkerId
-    seq_nr: int
-    status: CommandStatus
-    tests: list[int]
+class RunTests(Command):
+    tests: list[TestIdx]
+
+
+@dataclass
+class ShutdownWorker(Command):
+    pass
+
 
 class CommandStatus(enum.Enum):
-    Created = enum.auto()
-    """Command is created, but not yet submitted to a worker."""
     Pending = enum.auto()
-    """Command is either in queue or in progress."""
-    Canceled = enum.auto()
-    """Command was never executed, and never will be."""
-    Aborted = enum.auto()
-    """Command was started, but did not complete."""
+    InProgress = enum.auto()
     Completed = enum.auto()
-    """Command successfully completed."""
+    Canceled = enum.auto()
+    Aborted = enum.auto()
+
+
+# ------------------------------------------------------------------------------
+# Events
+# ------------------------------------------------------------------------------
+
+
+@dataclass
+class Event(abc.ABC):
+    worker_id: WorkerId
+
+
+@dataclass
+class CommandChangedStatus(Event):
+    seq_nr: SeqNr
+    new_status: CommandStatus
+
+
+@dataclass
+class WorkerStarted(Event):
+    pass
+
+
+@dataclass
+class WorkerShutdown(Event):
+    pass
+
+@dataclass
+class TestComplete(Event):
+    test_idx: TestIdx
