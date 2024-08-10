@@ -109,7 +109,7 @@ class Session:
     def __init__(self, config):
         self.config = config
 
-    @pytest.hookimpl
+    @pytest.hookimpl(tryfirst=True)
     def pytest_runtestloop(self, session):
         """Main testloop.
 
@@ -271,8 +271,14 @@ class RoundRobinScheduler(Scheduler):
                 if len(self.unscheduled_items) == 0:
                     self.schedule_tracker.schedule_command(schedule, worker_id, ShutdownWorker)
                 else:
-                    test_to_run = self.unscheduled_items.popleft()
-                    self.schedule_tracker.schedule_command(schedule, worker_id, RunTests, [test_to_run])
+                    pop_count = 1
+                    if len(self.unscheduled_items) > pop_count:
+                        test_to_run = [self.unscheduled_items.popleft() for _ in range(pop_count)]
+                    else:
+                        test_to_run = [e for e in self.unscheduled_items]
+                        self.unscheduled_items.clear()
+
+                    self.schedule_tracker.schedule_command(schedule, worker_id, RunTests, test_to_run)
         return schedule
 
     def notify(self, event: Event) -> bool:

@@ -6,7 +6,8 @@ def foo(request):
 
 @pytest.mark.parametrize('foo', ['Patrick!', 'Spongebob!'], indirect=True)
 @pytest.mark.parametrize('bar,baz', [('hi', 'whats'), ('there', 'up')])
-def test_foo(foo, bar, baz):
+@pytest.mark.parametrize('huh', list(range(10)))
+def test_foo(foo, bar, baz, huh):
     # assert bar == 'hi'
     pass
 
