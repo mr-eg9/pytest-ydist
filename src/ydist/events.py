@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ydist.types import SeqNr, CommandStatus, Event, TestIdx
 
@@ -24,3 +25,8 @@ class WorkerShutdown(Event):
 @dataclass
 class TestComplete(Event):
     test_idx: TestIdx
+
+
+@dataclass
+class CustomEvent(Event):
+    data: Any

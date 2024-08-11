@@ -4,10 +4,8 @@ import pytest
 def foo(request):
     pass
 
-@pytest.mark.parametrize('foo', ['Patrick!', 'Spongebob!'], indirect=True)
-@pytest.mark.parametrize('bar,baz', [('hi', 'whats'), ('there', 'up')])
-@pytest.mark.parametrize('huh', list(range(10)))
-def test_foo(foo, bar, baz, huh):
+@pytest.mark.parametrize('huh', list(range(100_000)))
+def test_foo(huh):
     # assert bar == 'hi'
     pass
 

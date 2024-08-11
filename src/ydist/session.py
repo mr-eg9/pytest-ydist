@@ -3,12 +3,13 @@ from __future__ import annotations
 import pytest
 from ydist.types import WorkerId, Worker, Schedule, Scheduler
 
+from ydist.workers.psworker import ProccessWorker
 from ydist.workers.syncworker import SyncWorker
 from ydist.workers.threadworker import ThreadWorker
 from ydist.schedulers.round_robin import RoundRobinScheduler
 from ydist import commands, events
 
-from multiprocessing import Event as MpEvent
+from threading import Event as MpEvent
 
 class Session:
     """The `Session` instance used by this plugin"""
@@ -48,7 +49,7 @@ class Session:
 
     # Could be a hook
     def init_workers(self, session, config, has_events) -> dict[WorkerId, Worker]:
-        return {WorkerId(i): ThreadWorker(i, session, config, has_events) for i in range(2)}
+        return {WorkerId(i): ProccessWorker(i, session, config, has_events) for i in range(10)}
 
     def shutdown_workers(self, workers):
         for worker in workers.values():
@@ -59,9 +60,8 @@ class Session:
         return RoundRobinScheduler(session, config)
 
     def wait_for_event(self):
-        # self.has_events.wait()
-        # self.has_events.clear()
-        pass
+        self.has_events.wait()
+        self.has_events.clear()
 
     def submit_work(self, workers: dict[WorkerId, Worker], schedule: Schedule):
         for cancellation in schedule.cancelations:

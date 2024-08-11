@@ -19,19 +19,29 @@ class RoundRobinScheduler(Scheduler):
         schedule = Schedule()
 
         for worker_id in self.schedule_tracker.worker_ids():
-            if len(self.schedule_tracker.get_commands(worker_id)) == 0:
-                if len(self.unscheduled_items) == 0:
-                    self.schedule_tracker.schedule_command(schedule, worker_id, commands.ShutdownWorker)
-                else:
-                    pop_count = 1
-                    if len(self.unscheduled_items) > pop_count:
-                        test_to_run = [self.unscheduled_items.popleft() for _ in range(pop_count)]
-                    else:
-                        test_to_run = [e for e in self.unscheduled_items]
-                        self.unscheduled_items.clear()
-
-                    self.schedule_tracker.schedule_command(schedule, worker_id, commands.RunTests, test_to_run)
+            command_count = len(self.schedule_tracker.get_commands(worker_id))
+            match command_count:
+                case 0:
+                    self._schedule_tests_for_worker(schedule, worker_id)
+                    self._schedule_tests_for_worker(schedule, worker_id)
+                case 1:
+                    self._schedule_tests_for_worker(schedule, worker_id)
+                case _:
+                    pass
         return schedule
+
+    def _schedule_tests_for_worker(self, schedule, worker_id):
+        if len(self.unscheduled_items) == 0:
+            self.schedule_tracker.schedule_command(schedule, worker_id, commands.ShutdownWorker)
+        else:
+            pop_count = 10000
+            if len(self.unscheduled_items) > pop_count:
+                test_to_run = [self.unscheduled_items.popleft() for _ in range(pop_count)]
+            else:
+                test_to_run = [e for e in self.unscheduled_items]
+                self.unscheduled_items.clear()
+
+            self.schedule_tracker.schedule_command(schedule, worker_id, commands.RunTests, test_to_run)
 
     def notify(self, event: Event) -> bool:
         if isinstance(event, events.WorkerStarted):
@@ -42,6 +52,8 @@ class RoundRobinScheduler(Scheduler):
             remaining_commands = self.schedule_tracker.remove_worker(event.worker_id)
             match remaining_commands:
                 case [ShutdownCommand]:
+                    pass
+                case []:
                     pass
                 case _:
                     raise RuntimeError('Worker unexpectedly shut down while there were remaining items')
