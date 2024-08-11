@@ -1,0 +1,5 @@
+src/ydist/_version.py
+**/__pycache__
+**/*.egg-info
+venv
+.pytest_cache
