@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from typing import Type
 from collections import deque
+from multiprocessing.synchronize import Event as MpEvent
 
 from ydist.types import Worker, Event, Cancelation, TestIdx, CommandStatus, Command
 from ydist import commands
 from ydist import events
 
 class SyncWorker(Worker):
-    def __init__(self, id, session, config):
+    def __init__(self, id, session, config, has_events):
         self.id = id
         self.config = config
         self.items = session.items
         self.events: deque[Event] = deque()
         self.pending_test = None
+        self.has_events: MpEvent = has_events
         self._register_event(events.WorkerStarted)
 
     def submit_new_command(self, command: Command):
@@ -61,4 +63,4 @@ class SyncWorker(Worker):
 
     def _register_event(self, event_cls: Type[Event], *args, **kwargs):
         self.events.append(event_cls(self.id, *args, **kwargs))
-        # TODO: Set the events flag in session
+        self.has_events.set()

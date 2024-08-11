@@ -46,7 +46,7 @@ class CommandStatus(enum.Enum):
 
 class Worker(abc.ABC):
     @abc.abstractmethod
-    def __init__(self, id, config, items):
+    def __init__(self, id, config, items, has_event):
         pass
 
     @abc.abstractmethod
