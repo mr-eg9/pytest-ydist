@@ -13,11 +13,11 @@ from ydist import events
 
 
 class ThreadWorker(Worker):
-    def __init__(self, id, session, config, has_event):
-        self.id = id
+    def __init__(self, worker_id, session, config, has_event):
+        self.worker_id = worker_id
         self.has_events: MpEvent = has_event
         self.submitted_commands = 0
-        self.worker_thread = WorkerThread(id, self.has_events, config, session.items)
+        self.worker_thread = WorkerThread(worker_id, self.has_events, config, session.items)
         self.worker_thread.daemon = True
 
         self.worker_thread.start()

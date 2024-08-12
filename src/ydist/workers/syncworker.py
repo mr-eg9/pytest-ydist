@@ -9,8 +9,8 @@ from ydist import commands
 from ydist import events
 
 class SyncWorker(Worker):
-    def __init__(self, id, session, config, has_events):
-        self.id = id
+    def __init__(self, worker_id, session, config, has_events):
+        self.worker_id = worker_id
         self.config = config
         self.items = session.items
         self.events: deque[Event] = deque()
@@ -62,5 +62,5 @@ class SyncWorker(Worker):
         self._register_event(events.TestComplete, test_idx)
 
     def _register_event(self, event_cls: Type[Event], *args, **kwargs):
-        self.events.append(event_cls(self.id, *args, **kwargs))
+        self.events.append(event_cls(self.worker_id, *args, **kwargs))
         self.has_events.set()

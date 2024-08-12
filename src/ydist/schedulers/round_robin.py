@@ -34,7 +34,7 @@ class RoundRobinScheduler(Scheduler):
         if len(self.unscheduled_items) == 0:
             self.schedule_tracker.schedule_command(schedule, worker_id, commands.ShutdownWorker)
         else:
-            pop_count = 10000
+            pop_count = 10
             if len(self.unscheduled_items) > pop_count:
                 test_to_run = [self.unscheduled_items.popleft() for _ in range(pop_count)]
             else:
@@ -56,6 +56,7 @@ class RoundRobinScheduler(Scheduler):
                 case []:
                     pass
                 case _:
+                    # TODO: Add better error handling
                     raise RuntimeError('Worker unexpectedly shut down while there were remaining items')
             return False
 

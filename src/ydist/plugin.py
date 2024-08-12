@@ -11,8 +11,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group._addoption(
         "--ydist-worker-addr",
         dest="ydist_worker_addr",
+        type=str,
         action="store",
         help="Used to specify the ydist worker address when initializing worker subproccesses"
+    )
+    group._addoption(
+        "--ydist-worker-id",
+        dest="ydist_worker_id",
+        type=int,
+        action="store",
+        help="Tells the ydist worker proccess its id"
     )
 
 @pytest.hookimpl(trylast=True)

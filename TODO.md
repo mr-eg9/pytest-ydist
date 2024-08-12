@@ -2,13 +2,14 @@
  - [x] Simple scheduler
  - [x] SingleThreaded Worker
  - [x] MultiThreaded Worker -- Was not a good idea
- - [ ] MultiProccess
+ - [x] MultiProccess
     - [x] Commands and Events working
     - [x] Tests Executing
-    - [ ] Passing Test data back to main proccess for reporting etc...
+    - [x] Passing Test data back to main proccess for reporting etc...
  - [ ] Adding hooks for different features
  - [ ] Resource Scheduler -- Could be done in a separate project
  - [ ] Standardized Benchmarks
+ - [ ] Cleanups
  - [ ] Tests
  - [ ] Docs
- - [ ] Happiness -- Probably not feasible
+ - [ ] Happiness -- Probably not feasible, especially after previous 3 items

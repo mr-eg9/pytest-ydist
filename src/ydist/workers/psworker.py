@@ -1,14 +1,17 @@
 from __future__ import annotations
+from dataclasses import dataclass
 
 import pytest
 
-from typing import Type
+from typing import Any, Generator, Type
 from collections import deque
 import threading
 import subprocess
 import sys
 import socket
 import json
+import warnings
+import importlib
 
 from ydist.types import Worker, Event, Cancelation, TestIdx, CommandStatus, Command
 from ydist import commands
@@ -16,23 +19,27 @@ from ydist import events
 
 
 class ProccessWorker(Worker):
-    def __init__(self, id, session, config, has_events: threading.Event):
+    def __init__(self, worker_id, session, config, has_events: threading.Event):
         _ = session
-        self.id = id
+        self.worker_id = worker_id
         self.config = config
         self.has_event = has_events
         self.json_encoder = json.JSONEncoder()
         self.completed_commands = 0
         self.submitted_commands = 0
+        self.session = session
 
         worker_socket = socket.create_server(('localhost', 0))  # Let the OS pick the port
         worker_socket_addr = f'localhost:{worker_socket.getsockname()[1]}'
         argv = sys.argv.copy()
         argv.extend(['--ydist-worker-addr', worker_socket_addr])
-        self.worker_ps = self.worker_ps = subprocess.Popen(argv)
+        argv.extend(['--ydist-worker-id', str(self.worker_id)])
+        sub_out = subprocess.DEVNULL
+        # sub_out = None
+        self.worker_ps = self.worker_ps = subprocess.Popen(argv, stdout=sub_out)
         self.conn, _ = worker_socket.accept()
 
-        self.event_receiver = EventReceiver(id, has_events, self.conn)
+        self.event_receiver = EventReceiver(worker_id, has_events, self.conn)
         self.event_receiver.start()
 
 
@@ -48,13 +55,64 @@ class ProccessWorker(Worker):
         if len(self.event_receiver.event_queue) > 0:
             # NOTE: deque.popleft is threadsafe from outside the thread
             event = self.event_receiver.event_queue.popleft()
-            match event:
-                case events.CommandChangedStatus(new_status=CommandStatus.Completed):
-                    self.completed_commands += 1
+            self._handle_worker_events(event)
             return event
 
     def is_idle(self) -> bool:
         return self.completed_commands == self.submitted_commands
+
+    def _handle_worker_events(self, event: Event) -> None:
+        match event:
+            case events.CommandChangedStatus(new_status=CommandStatus.Completed):
+                self.completed_commands += 1
+            # TODO: Implement
+            # case Internalerror():
+            #     self.config.hook.pytest_internalerror(event.excrepr)
+            case SessionStart():
+                pass
+                # self.config.hook.pytest_sessionstart()
+            case SessionFinish():
+                self.event_receiver.should_shutdown = True
+                self.conn.close()
+                # self.config.hook.pytest_sessionfinish(self.session, event.exitstatus)
+            case Collection():
+                # TODO: Figure out what to do about this one
+                pass # This is just a wrapper around Collection, to indicate where collection starts
+                # self.config.hook.collection()
+            case CollectionFinish():
+                # self.config.hook.pytest_collection_finish(self.session)
+                pass
+            case RuntestLogstart():
+                self.config.hook.pytest_runtest_logstart(nodeid=event.nodeid, location=event.location)
+            case RuntestLogfinish():
+                self.config.hook.pytest_runtest_logfinish(nodeid=event.nodeid, location=event.location)
+            case RuntestLogreport():
+                report = self.config.hook.pytest_report_from_serializable(config=self.config, data=event.report)
+                self.config.hook.pytest_runtest_logreport(report=report)
+            case RuntestCollectreport():
+                report = self.config.hook.pytest_report_from_serializable(config=self.config, data=event.report)
+                self.config.hook.pytest_collectreport(report=report)
+            case RuntestWarningRecorded():
+                try:
+                    category_qualname = event.warning_message.category
+                    mod_qualname, cls = category_qualname.rsplit('.', 1)
+                    package, module = mod_qualname.rsplit('.', 1)
+                    mod = importlib.import_module(module, package)
+                    category: Type[Warning] = getattr(mod, cls)
+                except ImportError:
+                    category = Warning
+                warning_message = warnings.WarningMessage(
+                    event.warning_message.message,
+                    category,
+                    event.warning_message.filename,
+                    event.warning_message.lineno
+                )
+                self.config.hook.pytest_runtest_warning_recorded(
+                    warning_message,
+                    event.when,
+                    event.nodeid,
+                    event.location
+                )
 
     def _encode_command(self, command: Command):
         command_data = {
@@ -75,7 +133,7 @@ class ProccessWorker(Worker):
 class EventReceiver(threading.Thread):
     def __init__(self, id, has_events, conn: socket.socket):
         super().__init__()
-        self.id = id
+        self.worker_id = id
         self.has_events = has_events
         self.event_queue = deque()
         self.should_shutdown = False
@@ -101,32 +159,53 @@ class EventReceiver(threading.Thread):
                     return None
                 self.data_buffer += new_data.decode('utf-8')
 
-    def _decode_event(self, event_data) -> Event:
-        match event_data['kind']:
+    def _decode_event(self, event_data: dict) -> Event:
+        assert event_data['worker_id'] == self.worker_id
+        assert 'kind' in event_data
+        kind = event_data.pop('kind')
+        match kind:
             case 'WorkerStarted':
-                return events.WorkerStarted(self.id)
+                return events.WorkerStarted(**event_data)
             case 'WorkerShutdown':
                 self.should_shutdown = True
-                return events.WorkerShutdown(self.id)
+                return events.WorkerShutdown(**event_data)
             case 'TestComplete':
-                return events.TestComplete(self.id, event_data['test_idx'])
+                return events.TestComplete(**event_data)
             case 'CommandChangedStatus':
-                return events.CommandChangedStatus(
-                    self.id,
-                    event_data['seq_nr'],
-                    CommandStatus[event_data['new_status']],
-                )
+                event_data['new_status'] = CommandStatus[event_data['new_status']]
+                return events.CommandChangedStatus(**event_data)
+            # case 'Internalerror':
+            #     return Internalerror(**event_data)
+            case 'SessionStart':
+                return SessionStart(**event_data)
+            case 'SessionFinish':
+                return SessionFinish(**event_data)
+            case 'Collection':
+                return Collection(**event_data)
+            case 'CollectionFinish':
+                return CollectionFinish(**event_data)
+            case 'RuntestLogstart':
+                return RuntestLogstart(**event_data)
+            case 'RuntestLogfinish':
+                return RuntestLogfinish(**event_data)
+            case 'RuntestLogreport':
+                return RuntestLogreport(**event_data)
+            case 'RuntestCollectreport':
+                return RuntestCollectreport(**event_data)
+            case 'RuntestWarningRecorded':
+                return RuntestWarningRecorded(**event_data)
         # TODO: Should probably call a hook here, rather than raising an exception?
         raise NotImplementedError(f'Unknown event {event_data}')
 
     def _register_event(self, event_cls: Type[Event], *args, **kwargs):
-        self.event_queue.append(event_cls(self.id, *args, **kwargs))
+        self.event_queue.append(event_cls(self.worker_id, *args, **kwargs))
         self.has_events.set()
 
 
 class WorkerProccess:
     def __init__(self, config):
         self.config = config
+        self.worker_id = config.getvalue('ydist_worker_id')
         worker_socket_addr = config.getvalue('ydist_worker_addr')
         addr, port = worker_socket_addr.split(':')
         self.conn = socket.create_connection((addr, int(port)))
@@ -170,6 +249,7 @@ class WorkerProccess:
     def _send_event(self, event_cls: Type[Event], **kwargs):
         data = {
             'kind': event_cls.__name__,
+            'worker_id': self.worker_id,
             **kwargs,
         }
         if event_cls == events.CommandChangedStatus:
@@ -222,3 +302,127 @@ class WorkerProccess:
                     tests=command_data['tests'],
                 )
         raise NotImplementedError(f'Unknown command {command_data}')
+
+    @pytest.hookimpl
+    def pytest_internalerror(self, excrepr: object, excinfo: object) -> None:
+        raise NotImplementedError(f'Handling internal errors not yet supported: {excrepr}, {excinfo}')
+        excrepr = str(excrepr)
+        self._send_event(Internalerror, excrepr=excrepr)
+
+    @pytest.hookimpl
+    def pytest_sessionstart(self, session: pytest.Session) -> None:
+        self._send_event(SessionStart)
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_sessionfinish(self, exitstatus: int) -> Generator[None, object, None]:
+        yield
+        self._send_event(SessionFinish, exitstatus=exitstatus)
+
+    @pytest.hookimpl
+    def pytest_collection(self) -> None:
+        self._send_event(CollectionFinish)
+
+    @pytest.hookimpl
+    def pytest_runtest_logstart(
+        self,
+        nodeid: str,
+        location: tuple[str, int | None, str],
+    ) -> None:
+        self._send_event(RuntestLogstart, nodeid=nodeid, location=location)
+
+    @pytest.hookimpl
+    def pytest_runtest_logfinish(
+        self,
+        nodeid: str,
+        location: tuple[str, int | None, str],
+    ) -> None:
+        self._send_event(RuntestLogfinish, nodeid=nodeid, location=location)
+
+    @pytest.hookimpl
+    def pytest_warning_recorded(
+        self,
+        warning_message: warnings.WarningMessage,
+        when: str,
+        nodeid: str,
+        location: tuple[str, int, str] | None,
+    ) -> None:
+        warning_message_ser = SerializedWarningMessage(
+            str(warning_message.message),
+            warning_message.category.__qualname__,
+            warning_message.filename,
+            warning_message.lineno,
+            str(warning_message.source),
+        )
+        self._send_event(
+            RuntestWarningRecorded,
+            warning_message=warning_message_ser,
+            when=when,
+            nodeid=nodeid,
+            location=location,
+        )
+
+    @pytest.hookimpl
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        report = self.config.hook.pytest_report_to_serializable(
+            config=self.config,
+            report=report,
+        )
+        self._send_event(RuntestLogreport, report=report)
+
+    @pytest.hookimpl
+    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        report = self.config.hook.pytest_report_to_serializable(
+            config=self.config,
+            report=report,
+        )
+        self._send_event(RuntestCollectreport, report=report)
+
+
+@dataclass
+class SessionStart(Event):
+    pass
+
+@dataclass
+class SessionFinish(Event):
+    exitstatus: int
+
+@dataclass
+class Collection(Event):
+    pass
+
+@dataclass
+class CollectionFinish(Event):
+    pass
+
+@dataclass
+class RuntestLogstart(Event):
+    nodeid: str
+    location: tuple[str, int | None, str]
+
+@dataclass
+class RuntestLogfinish(Event):
+    nodeid: str
+    location: tuple[str, int | None, str]
+
+@dataclass
+class RuntestLogreport(Event):
+    report: Any
+
+@dataclass
+class RuntestCollectreport(Event):
+    report: Any
+
+@dataclass
+class RuntestWarningRecorded(Event):
+    warning_message: SerializedWarningMessage
+    when: str
+    nodeid: str
+    location: tuple[str, int, str] | None
+
+@dataclass
+class SerializedWarningMessage:
+    message: str
+    category: str # I believe this is actuall the `__class__` of the warning, might need to remake this
+    filename: str
+    lineno: int
+    source: str
