@@ -6,7 +6,7 @@
     - [x] Commands and Events working
     - [x] Tests Executing
     - [x] Passing Test data back to main proccess for reporting etc...
- - [ ] Adding hooks for different features
+ - [x] Adding hooks for different features
  - [ ] Resource Scheduler -- Could be done in a separate project
  - [ ] Standardized Benchmarks
  - [ ] Cleanups

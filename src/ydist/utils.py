@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Type, Iterable
 from collections import deque
 
-from ydist.types import WorkerId, Command, SeqNr, CommandStatus, Schedule, Cancelation
+from ydist.types import WorkerId, Command, SeqNr, CommandStatus, Schedule
 
 class ScheduleTracker:
     """Utility object to help a scheduler keep track of and schedule commands."""
@@ -49,10 +49,6 @@ class ScheduleTracker:
         schedule.new_commands.append(command)
         self.worker_commands[worker_id].append(command)
         return seq_nr
-
-    def schedule_cancelation(self, schedule: Schedule, worker_id, seq_nr: SeqNr, abort: bool):
-        # TODO: Should we track reqested cancelations?
-        schedule.cancelations.append(Cancelation(worker_id=worker_id, seq_nr=seq_nr, abort=abort))
 
     def get_command_idx(self, worker_id, seq_nr) -> int:
         for i, command in enumerate(self.worker_commands[worker_id]):

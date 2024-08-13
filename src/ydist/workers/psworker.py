@@ -13,13 +13,20 @@ import json
 import warnings
 import importlib
 
-from ydist.types import Worker, Event, Cancelation, TestIdx, CommandStatus, Command
+from ydist.metacommands import WorkerMetaCommand
+from ydist.types import MetaCommand, Worker, Event, TestIdx, CommandStatus, Command
 from ydist import commands
 from ydist import events
 
 
 class ProccessWorker(Worker):
-    def __init__(self, worker_id, session, config, has_events: threading.Event):
+    def __init__(
+        self,
+        worker_id,
+        session,
+        config,
+        has_events: threading.Event
+    ):
         _ = session
         self.worker_id = worker_id
         self.config = config
@@ -39,17 +46,19 @@ class ProccessWorker(Worker):
         self.worker_ps = self.worker_ps = subprocess.Popen(argv, stdout=sub_out)
         self.conn, _ = worker_socket.accept()
 
-        self.event_receiver = EventReceiver(worker_id, has_events, self.conn)
+        self.event_receiver = EventReceiver(config, worker_id, has_events, self.conn)
         self.event_receiver.start()
 
 
     def submit_new_command(self, command: Command):
-        command_data = self._encode_command(command)
-        self.conn.send(bytes(command_data, 'utf-8'))
+        command_data = self.config.hook.pytest_ydist_command_to_serializable(command=command)
+        assert command_data is not None, f'Unable to serialize {command}'
+        json_data = self.json_encoder.encode(command_data)
+        self.conn.send(bytes(json_data, 'utf-8'))
         self.submitted_commands += 1
 
-    def submit_cancellation(self, cancellation: Cancelation):
-        pass
+    def submit_new_metacommand(self, metacommand: WorkerMetaCommand):
+        raise NotImplementedError('Worker metacommands are not yet implemented')
 
     def pop_event(self) -> Event | None:
         if len(self.event_receiver.event_queue) > 0:
@@ -65,34 +74,20 @@ class ProccessWorker(Worker):
         match event:
             case events.CommandChangedStatus(new_status=CommandStatus.Completed):
                 self.completed_commands += 1
-            # TODO: Implement
-            # case Internalerror():
-            #     self.config.hook.pytest_internalerror(event.excrepr)
-            case SessionStart():
-                pass
-                # self.config.hook.pytest_sessionstart()
-            case SessionFinish():
+            case events.WorkerShutdown():
                 self.event_receiver.should_shutdown = True
                 self.conn.close()
-                # self.config.hook.pytest_sessionfinish(self.session, event.exitstatus)
-            case Collection():
-                # TODO: Figure out what to do about this one
-                pass # This is just a wrapper around Collection, to indicate where collection starts
-                # self.config.hook.collection()
-            case CollectionFinish():
-                # self.config.hook.pytest_collection_finish(self.session)
-                pass
-            case RuntestLogstart():
+            case events.RuntestLogstart():
                 self.config.hook.pytest_runtest_logstart(nodeid=event.nodeid, location=event.location)
-            case RuntestLogfinish():
+            case events.RuntestLogfinish():
                 self.config.hook.pytest_runtest_logfinish(nodeid=event.nodeid, location=event.location)
-            case RuntestLogreport():
+            case events.RuntestLogreport():
                 report = self.config.hook.pytest_report_from_serializable(config=self.config, data=event.report)
                 self.config.hook.pytest_runtest_logreport(report=report)
-            case RuntestCollectreport():
+            case events.RuntestCollectreport():
                 report = self.config.hook.pytest_report_from_serializable(config=self.config, data=event.report)
                 self.config.hook.pytest_collectreport(report=report)
-            case RuntestWarningRecorded():
+            case events.RuntestWarningRecorded():
                 try:
                     category_qualname = event.warning_message.category
                     mod_qualname, cls = category_qualname.rsplit('.', 1)
@@ -114,26 +109,18 @@ class ProccessWorker(Worker):
                     event.location
                 )
 
-    def _encode_command(self, command: Command):
-        command_data = {
-            'kind': command.__class__.__name__,
-            'seq_nr': command.seq_nr,
-            'worker_id': command.worker_id,
-            'status': command.status.name,
-        }
-        match command:
-            case commands.RunTests():
-                command_data['tests'] = command.tests
-                return self.json_encoder.encode(command_data)
-            case commands.ShutdownWorker():
-                return self.json_encoder.encode(command_data)
-        raise NotImplementedError(f'Unable to encode command {command}')
-
 
 class EventReceiver(threading.Thread):
-    def __init__(self, id, has_events, conn: socket.socket):
+    def __init__(
+        self,
+        config: pytest.Config,
+        worker_id,
+        has_events,
+        conn: socket.socket
+    ):
         super().__init__()
-        self.worker_id = id
+        self.config = config
+        self.worker_id = worker_id
         self.has_events = has_events
         self.event_queue = deque()
         self.should_shutdown = False
@@ -143,7 +130,8 @@ class EventReceiver(threading.Thread):
 
     def run(self):
         while (event_data := self._read_event_json()) is not None:
-            event = self._decode_event(event_data)
+            event = self.config.hook.pytest_ydist_event_from_serializable(event_data=event_data)
+            assert event is not None, f'Failed to decode event_data: {event_data}'
             self.event_queue.append(event)
             self.has_events.set()
 
@@ -154,48 +142,13 @@ class EventReceiver(threading.Thread):
                 self.data_buffer = self.data_buffer[len:]
                 return event_data
             except json.JSONDecodeError:
-                new_data = self.conn.recv(1024)
+                try:
+                    new_data = self.conn.recv(1024)
+                except ConnectionResetError:
+                    return None
                 if new_data == b'':
                     return None
                 self.data_buffer += new_data.decode('utf-8')
-
-    def _decode_event(self, event_data: dict) -> Event:
-        assert event_data['worker_id'] == self.worker_id
-        assert 'kind' in event_data
-        kind = event_data.pop('kind')
-        match kind:
-            case 'WorkerStarted':
-                return events.WorkerStarted(**event_data)
-            case 'WorkerShutdown':
-                self.should_shutdown = True
-                return events.WorkerShutdown(**event_data)
-            case 'TestComplete':
-                return events.TestComplete(**event_data)
-            case 'CommandChangedStatus':
-                event_data['new_status'] = CommandStatus[event_data['new_status']]
-                return events.CommandChangedStatus(**event_data)
-            # case 'Internalerror':
-            #     return Internalerror(**event_data)
-            case 'SessionStart':
-                return SessionStart(**event_data)
-            case 'SessionFinish':
-                return SessionFinish(**event_data)
-            case 'Collection':
-                return Collection(**event_data)
-            case 'CollectionFinish':
-                return CollectionFinish(**event_data)
-            case 'RuntestLogstart':
-                return RuntestLogstart(**event_data)
-            case 'RuntestLogfinish':
-                return RuntestLogfinish(**event_data)
-            case 'RuntestLogreport':
-                return RuntestLogreport(**event_data)
-            case 'RuntestCollectreport':
-                return RuntestCollectreport(**event_data)
-            case 'RuntestWarningRecorded':
-                return RuntestWarningRecorded(**event_data)
-        # TODO: Should probably call a hook here, rather than raising an exception?
-        raise NotImplementedError(f'Unknown event {event_data}')
 
     def _register_event(self, event_cls: Type[Event], *args, **kwargs):
         self.event_queue.append(event_cls(self.worker_id, *args, **kwargs))
@@ -221,40 +174,64 @@ class WorkerProccess:
         self._send_event(events.WorkerStarted)
         while not self.should_shutdown:
             command_data = self._read_command_data()
-            command = self._decode_command(command_data)
-            self._send_event(
-                events.CommandChangedStatus,
-                worker_id=command.worker_id,
-                seq_nr=command.seq_nr,
-                new_status=CommandStatus.InProgress,
-            )
+            if command_data is None:
+                continue
 
-            match command:
-                case commands.ShutdownWorker():
-                    self.should_shutdown = True
-                    if self.pending_test is not None:
-                        self._exec_test(self.pending_test, None)
-                case commands.RunTests():
-                    self._exec_run_tests(command)
+            if command_data.get('is_meta', False):
+                command = self.config.hook.pytest_ydist_metacommand_from_serializable(
+                    command_data=command_data)
+            else:
+                command = self.config.hook.pytest_ydist_command_from_serializable(
+                    command_data=command_data)
 
-            self._send_event(
-                events.CommandChangedStatus,
-                worker_id=command.worker_id,
-                seq_nr=command.seq_nr,
-                new_status=CommandStatus.Completed,
-            )
+                self._send_command_changed_status(command, CommandStatus.InProgress)
+                self.config.hook.pytest_worker_handle_command(command=command)
+                self._send_command_changed_status(command, CommandStatus.Completed)
+
         self._send_event(events.WorkerShutdown)
         return True
 
+
+    @pytest.hookimpl()
+    def pytest_worker_handle_command(self, command: Command):
+        match command:
+            case commands.ShutdownWorker():
+                self.should_shutdown = True
+                if self.pending_test is not None:
+                    self._exec_test(self.pending_test, None)
+            case commands.RunTests():
+                self._exec_run_tests(command)
+
+    @pytest.hookimpl()
+    def pytest_worker_handle_metacommand(self, metacommand: WorkerMetaCommand):
+        raise NotImplementedError('Metacommands not yet implemented for this worker')
+
+    @pytest.hookimpl()
+    def pytest_ydist_metacommand_from_serializable(
+        self,
+        metacommand_data: dict
+    ) -> MetaCommand | None:
+        """Convert a serializable type representing an metacommand back into a metacommand.
+
+        Note that the `kind` element in the dictionary will contain the name of the type.
+        """
+        # Placeholder, will be used for the `WorkSteal` metacommand, whenever that gets implemented.
+        _ = metacommand_data
+
+
+    def _send_command_changed_status(self, command, new_status):
+        self._send_event(
+            events.CommandChangedStatus,
+            seq_nr=command.seq_nr,
+            new_status=new_status,
+        )
+
+
     def _send_event(self, event_cls: Type[Event], **kwargs):
-        data = {
-            'kind': event_cls.__name__,
-            'worker_id': self.worker_id,
-            **kwargs,
-        }
-        if event_cls == events.CommandChangedStatus:
-            data['new_status'] = data['new_status'].name
-        json_data = self.json_encoder.encode(data)
+        event = event_cls(worker_id=self.worker_id, **kwargs)
+        event_data = self.config.hook.pytest_ydist_event_to_serializable(event=event)
+        assert event_data is not None, f'Failed to serialize event {event}'
+        json_data = self.json_encoder.encode(event_data)
         self.conn.send(bytes(json_data, 'utf-8'))
 
 
@@ -275,33 +252,19 @@ class WorkerProccess:
         self._send_event(events.TestComplete, test_idx=test_idx)
 
     def _read_command_data(self) -> dict | None:
-        while not self.should_shutdown:
+        try:
+            command_data, len = self.json_decoder.raw_decode(self.command_data_buffer)
+            self.command_data_buffer = self.command_data_buffer[len:]
+            return command_data
+        except json.JSONDecodeError:
             try:
-                command_data, len = self.json_decoder.raw_decode(self.command_data_buffer)
-                self.command_data_buffer = self.command_data_buffer[len:]
-                return command_data
-            except json.JSONDecodeError:
                 new_data = self.conn.recv(1024)
-                if new_data == b'':
-                    return None
-                self.command_data_buffer += new_data.decode('utf-8')
+            except ConnectionResetError:
+                return None
+            if new_data == b'':
+                return None
+            self.command_data_buffer += new_data.decode('utf-8')
 
-    def _decode_command(self, command_data) -> Command:
-        match command_data['kind']:
-            case 'ShutdownWorker':
-                return commands.ShutdownWorker(
-                    seq_nr=command_data['seq_nr'],
-                    worker_id=command_data['worker_id'],
-                    status=command_data['status'],
-                )
-            case 'RunTests':
-                return commands.RunTests(
-                    seq_nr=command_data['seq_nr'],
-                    worker_id=command_data['worker_id'],
-                    status=CommandStatus[command_data['status']],
-                    tests=command_data['tests'],
-                )
-        raise NotImplementedError(f'Unknown command {command_data}')
 
     @pytest.hookimpl
     def pytest_internalerror(self, excrepr: object, excinfo: object) -> None:
@@ -311,16 +274,16 @@ class WorkerProccess:
 
     @pytest.hookimpl
     def pytest_sessionstart(self, session: pytest.Session) -> None:
-        self._send_event(SessionStart)
+        self._send_event(events.SessionStart)
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_sessionfinish(self, exitstatus: int) -> Generator[None, object, None]:
         yield
-        self._send_event(SessionFinish, exitstatus=exitstatus)
+        self._send_event(events.SessionFinish, exitstatus=exitstatus)
 
     @pytest.hookimpl
     def pytest_collection(self) -> None:
-        self._send_event(CollectionFinish)
+        self._send_event(events.CollectionFinish)
 
     @pytest.hookimpl
     def pytest_runtest_logstart(
@@ -328,7 +291,7 @@ class WorkerProccess:
         nodeid: str,
         location: tuple[str, int | None, str],
     ) -> None:
-        self._send_event(RuntestLogstart, nodeid=nodeid, location=location)
+        self._send_event(events.RuntestLogstart, nodeid=nodeid, location=location)
 
     @pytest.hookimpl
     def pytest_runtest_logfinish(
@@ -336,7 +299,7 @@ class WorkerProccess:
         nodeid: str,
         location: tuple[str, int | None, str],
     ) -> None:
-        self._send_event(RuntestLogfinish, nodeid=nodeid, location=location)
+        self._send_event(events.RuntestLogfinish, nodeid=nodeid, location=location)
 
     @pytest.hookimpl
     def pytest_warning_recorded(
@@ -346,7 +309,7 @@ class WorkerProccess:
         nodeid: str,
         location: tuple[str, int, str] | None,
     ) -> None:
-        warning_message_ser = SerializedWarningMessage(
+        warning_message_ser = events.SerializedWarningMessage(
             str(warning_message.message),
             warning_message.category.__qualname__,
             warning_message.filename,
@@ -354,7 +317,7 @@ class WorkerProccess:
             str(warning_message.source),
         )
         self._send_event(
-            RuntestWarningRecorded,
+            events.RuntestWarningRecorded,
             warning_message=warning_message_ser,
             when=when,
             nodeid=nodeid,
@@ -367,7 +330,7 @@ class WorkerProccess:
             config=self.config,
             report=report,
         )
-        self._send_event(RuntestLogreport, report=report)
+        self._send_event(events.RuntestLogreport, report=report)
 
     @pytest.hookimpl
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
@@ -375,54 +338,4 @@ class WorkerProccess:
             config=self.config,
             report=report,
         )
-        self._send_event(RuntestCollectreport, report=report)
-
-
-@dataclass
-class SessionStart(Event):
-    pass
-
-@dataclass
-class SessionFinish(Event):
-    exitstatus: int
-
-@dataclass
-class Collection(Event):
-    pass
-
-@dataclass
-class CollectionFinish(Event):
-    pass
-
-@dataclass
-class RuntestLogstart(Event):
-    nodeid: str
-    location: tuple[str, int | None, str]
-
-@dataclass
-class RuntestLogfinish(Event):
-    nodeid: str
-    location: tuple[str, int | None, str]
-
-@dataclass
-class RuntestLogreport(Event):
-    report: Any
-
-@dataclass
-class RuntestCollectreport(Event):
-    report: Any
-
-@dataclass
-class RuntestWarningRecorded(Event):
-    warning_message: SerializedWarningMessage
-    when: str
-    nodeid: str
-    location: tuple[str, int, str] | None
-
-@dataclass
-class SerializedWarningMessage:
-    message: str
-    category: str # I believe this is actuall the `__class__` of the warning, might need to remake this
-    filename: str
-    lineno: int
-    source: str
+        self._send_event(events.RuntestCollectreport, report=report)

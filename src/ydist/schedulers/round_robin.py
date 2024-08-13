@@ -34,7 +34,7 @@ class RoundRobinScheduler(Scheduler):
         if len(self.unscheduled_items) == 0:
             self.schedule_tracker.schedule_command(schedule, worker_id, commands.ShutdownWorker)
         else:
-            pop_count = 10
+            pop_count = 1000
             if len(self.unscheduled_items) > pop_count:
                 test_to_run = [self.unscheduled_items.popleft() for _ in range(pop_count)]
             else:

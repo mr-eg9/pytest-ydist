@@ -1,27 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import NewType
+from typing import NewType, TYPE_CHECKING
 import abc
 import enum
 
 
+if TYPE_CHECKING:
+    from ydist.metacommands import WorkerMetaCommand
+
+
 SeqNr = NewType('SeqNr', int)
+MetaSeqNr = NewType('MetaSeqNr', int)
 WorkerId = NewType('WorkerId', int)
 TestIdx = NewType('TestIdx', int)
 
 
 @dataclass
-class Cancelation:
-    worker_id: WorkerId
-    seq_nr: SeqNr
-    abort: bool
-
-
-@dataclass
 class Schedule:
     new_commands: list[Command] = field(default_factory=lambda: [])
-    cancelations: list[Cancelation] = field(default_factory=lambda: [])
+    new_metacommands: list[MetaCommand] = field(default_factory=lambda: [])
 
 
 @dataclass
@@ -36,12 +34,23 @@ class Command(abc.ABC):
     status: CommandStatus
 
 
+@dataclass
+class MetaCommand(abc.ABC):
+    meta_seq_nr: MetaSeqNr
+    meta_target: MetaTarget
+
+
 class CommandStatus(enum.Enum):
     Pending = enum.auto()
     InProgress = enum.auto()
     Completed = enum.auto()
     Canceled = enum.auto()
     Aborted = enum.auto()
+
+
+class MetaTarget(enum.Enum):
+    Session = enum.auto()
+    Worker = enum.auto()
 
 
 class Worker(abc.ABC):
@@ -54,7 +63,7 @@ class Worker(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def submit_cancellation(self, cancellation: Cancelation):
+    def submit_new_metacommand(self, metacommand: WorkerMetaCommand):
         pass
 
     @abc.abstractmethod
