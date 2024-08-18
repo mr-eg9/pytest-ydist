@@ -39,8 +39,10 @@ class Scheduler(ydist_types.Scheduler):
         match event:
             case ydist_events.WorkerStarted():
                 self.schedule_tracker.add_worker(event.worker_id)
+                self.assigned_tokens_by_worker_id[event.worker_id] = set()
                 return True
             case ydist_events.WorkerShutdown():
+                del self.assigned_tokens_by_worker_id[event.worker_id]
                 remaining_commands = self.schedule_tracker.remove_worker(event.worker_id)
                 match remaining_commands:
                     case [ydist_commands.ShutdownWorker]:
@@ -86,11 +88,9 @@ class Scheduler(ydist_types.Scheduler):
                 all_idle = False
 
             if command_count < 3:
-                for collection_ids, test_idx in self.remaining_item_idx_by_collection_ids.items():
+                for collection_ids in list(self.remaining_item_idx_by_collection_ids.keys()):
                     tokens = self._get_token_set_to_use_for_collection_ids(
-                        self.config,
-                        self.items,
-                        test_idx,
+                        collection_ids,
                         self.available_tokens,
                     )
                     if tokens is not None:
@@ -107,9 +107,7 @@ class Scheduler(ydist_types.Scheduler):
         for collection_ids in self.remaining_item_idx_by_collection_ids:
             test_idx = self.remaining_item_idx_by_collection_ids[collection_ids]
             tokens = self._get_token_set_to_use_for_collection_ids(
-                self.config,
-                self.items,
-                self.remaining_item_idx_by_collection_ids[collection_ids],
+                collection_ids,
                 self.all_tokens,
             )
             assert tokens is not None, f'Failed to resolve resource requirements for test {test_idx[0]}'
@@ -137,10 +135,10 @@ class Scheduler(ydist_types.Scheduler):
             tokens=tokens,
         )
 
-    @staticmethod
-    def _get_token_set_to_use_for_collection_ids(config, items, item_idx, tokens) -> set[types.Token] | None:
-        first_test = items[item_idx[0]]
-        token_sets = config.hook.pytest_ydist_resource_tokens_from_test_item(
+    def _get_token_set_to_use_for_collection_ids(self, collection_id, tokens) -> set[types.Token] | None:
+        first_test_idx = self.remaining_item_idx_by_collection_ids[collection_id][0]
+        first_test = self.items[first_test_idx]
+        token_sets = self.config.hook.pytest_ydist_resource_tokens_from_test_item(
             first_test=first_test, tokens=tokens)
 
         if any(token_set is None for token_set in token_sets):
@@ -156,11 +154,12 @@ class Scheduler(ydist_types.Scheduler):
     def _get_item_idx_by_collection_ids(config: pytest.Config, items: list[pytest.Item]):
         test_items_by_group = {}
         for i, item in enumerate(items):
-            collection_ids = config.hook.pytest_dist_resource_collection_id_from_test_item(
-                item=item)
+            collection_ids = tuple(
+                config.hook.pytest_ydist_resource_collection_id_from_test_item(item=item)
+            )
             assert all(isinstance(collection_id, types.CollectionId) for collection_id in collection_ids), \
                 f'Expected all elements to be `CollectionId`, received: {collection_ids}'
-            test_items_by_group.setdefault(collection_ids, deque()).append(i)
+            test_items_by_group.setdefault(collection_ids, []).append(i)
         return test_items_by_group
 
     @staticmethod

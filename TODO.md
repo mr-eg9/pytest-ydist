@@ -8,6 +8,7 @@
     - [x] Passing Test data back to main proccess for reporting etc...
  - [x] Adding hooks for different features
  - [ ] Resource Scheduler -- Could be done in a separate project
+    - [ ] Formalize `Worker` and `Scheduler` as separete plugin slots
  - [ ] Standardized Benchmarks
  - [ ] Cleanups
  - [ ] Tests

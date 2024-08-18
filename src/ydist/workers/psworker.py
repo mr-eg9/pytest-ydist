@@ -56,6 +56,7 @@ class ProccessWorker(Worker):
             command=command,
         )
         assert command_data is not None, f'Unable to serialize {command}'
+        print(command_data)
         json_data = self.json_encoder.encode(command_data)
         self.conn.send(bytes(json_data, 'utf-8'))
         self.submitted_commands += 1

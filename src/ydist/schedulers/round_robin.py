@@ -22,17 +22,22 @@ class RoundRobinScheduler(Scheduler):
             command_count = len(self.schedule_tracker.get_commands(worker_id))
             match command_count:
                 case 0:
-                    self._schedule_tests_for_worker(schedule, worker_id)
-                    self._schedule_tests_for_worker(schedule, worker_id)
+                    if not self._schedule_tests_for_worker(schedule, worker_id):
+                        self._schedule_tests_for_worker(schedule, worker_id)
                 case 1:
                     self._schedule_tests_for_worker(schedule, worker_id)
                 case _:
                     pass
         return schedule
 
-    def _schedule_tests_for_worker(self, schedule, worker_id):
+    def _schedule_tests_for_worker(self, schedule, worker_id) -> bool:
+        """Schedule either some more tests, or a shutdown command for the worker.
+
+        :returns: True if a shutdown command was scheduled, False otherwise
+        """
         if len(self.unscheduled_items) == 0:
             self.schedule_tracker.schedule_command(schedule, worker_id, commands.ShutdownWorker)
+            return True
         else:
             pop_count = 1000
             if len(self.unscheduled_items) > pop_count:
@@ -42,6 +47,7 @@ class RoundRobinScheduler(Scheduler):
                 self.unscheduled_items.clear()
 
             self.schedule_tracker.schedule_command(schedule, worker_id, commands.RunTests, test_to_run)
+        return False
 
     def notify(self, event: Event) -> bool:
         if isinstance(event, events.WorkerStarted):
@@ -57,7 +63,10 @@ class RoundRobinScheduler(Scheduler):
                     pass
                 case _:
                     # TODO: Add better error handling
-                    raise RuntimeError('Worker unexpectedly shut down while there were remaining items')
+                    raise RuntimeError(
+                        'Worker unexpectedly shut down '
+                        f'while there were remaining commands: {remaining_commands}'
+                    )
             return False
 
         if isinstance(event, events.CommandChangedStatus):

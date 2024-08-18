@@ -17,24 +17,26 @@ class RunTestsWithTokens(ydist_types.Command):
     tokens: list[types.Token]
 
 
-@pytest.hookspec(firstresult=True)
+@pytest.hookimpl
 def pytest_ydist_command_to_serializable(config: pytest.Config, command: ydist_types.Command) -> dict | None:
     """Convert a command event to a serializable type.
 
     Typically this is a dictionary of simple types.
     """
     match command:
-        case RunTestsWithTokens:
+        case RunTestsWithTokens():
             command_data = asdict(command)
             command_data['run_test_command'] = config.hook.pytest_ydist_command_to_serializable(
                 config=config,
-                command=command_data['run_test_command'])
+                command=command.run_test_command
+            )
+            command_data['tokens'] = list(command_data['tokens'])
             command_data['status'] = command_data['status'].name
             command_data['kind'] = command.__class__.__name__
             return command_data
 
 
-@pytest.hookspec(firstresult=True)
+@pytest.hookimpl
 def pytest_ydist_command_from_serializable(config: pytest.Config, command_data: dict) -> ydist_types.Command | None:
     """Convert a serializable type representing an a command back into a command.
 
@@ -43,11 +45,12 @@ def pytest_ydist_command_from_serializable(config: pytest.Config, command_data: 
     match command_data['kind']:
         case RunTestsWithTokens.__name__:
             command_data.pop('kind')
-            command_data['status'] = ydist_types.CommandStatus[command_data['status']]
             command_data['run_test_command'] = config.hook.pytest_ydist_command_from_serializable(
                 config=config,
                 command_data=command_data['run_test_command']
             )
+            command_data['tokens'] = set(command_data['tokens'])
+            command_data['status'] = ydist_types.CommandStatus[command_data['status']]
             return RunTestsWithTokens(**command_data)
 
 

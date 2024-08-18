@@ -17,9 +17,13 @@ class Session:
             case 'auto' | None: self.numworkers = 8
             case _: self.numworkers = int(numworkers)
 
+        if self.numworkers == 0:
+            raise ValueError('--numworkers cannot be 0')
+
         self.has_events = MpEvent()
         self.next_worker_id = WorkerId(0)
         self.worker_destroy_queue = deque()
+        self.ready_workers = set()
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtestloop(self, session: pytest.Session):
@@ -38,9 +42,12 @@ class Session:
             session=session,
             config=config,
         )
+        if scheduler is None:
+            raise ValueError(f'No ydist scheduler specified (--ydist-scheduler)')
 
         # Handle initial `WorkerCreated` events
-        self.handle_events(config, workers, scheduler)
+        while len(self.ready_workers) < self.numworkers:
+            self.handle_events(config, workers, scheduler)
 
         should_reschedule = True
 
@@ -58,8 +65,11 @@ class Session:
 
     @pytest.hookimpl
     def pytest_session_handle_event(self, config: pytest.Config, event: Event):
-        if isinstance(event, events.WorkerShutdown):
-            self.worker_destroy_queue.append(event.worker_id)
+        match event:
+            case events.WorkerStarted():
+                self.ready_workers.add(event.worker_id)
+            case events.WorkerShutdown():
+                self.worker_destroy_queue.append(event.worker_id)
 
     @pytest.hookimpl
     def pytest_session_handle_metacommand(self, metacommand: SessionMetaCommand):
@@ -81,6 +91,8 @@ class Session:
             config=config,
             has_events=self.has_events
         )
+        if worker is None:
+            raise ValueError('No ydist worker specifed (--ydist-worker)')
         workers[worker_id] = worker
 
     def _destroy_done_workers(self, workers: dict[WorkerId, Worker]):
