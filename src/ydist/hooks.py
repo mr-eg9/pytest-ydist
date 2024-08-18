@@ -86,7 +86,10 @@ def pytest_ydist_metacommand_from_serializable(config: pytest.Config, metacomman
 
 
 @pytest.hookspec()
-def pytest_session_handle_event(config: pytest.Config, event: types.Event):
+def pytest_session_handle_event(
+    config: pytest.Config,
+    event: types.Event
+):
     """Handle an event in the session.
 
     This function will be called for all generated events.
@@ -96,7 +99,10 @@ def pytest_session_handle_event(config: pytest.Config, event: types.Event):
 
 
 @pytest.hookspec()
-def pytest_session_handle_metacommand(config: pytest.Config, metacommand: metacommands.SessionMetaCommand):
+def pytest_session_handle_metacommand(
+    config: pytest.Config,
+    metacommand: metacommands.SessionMetaCommand
+):
     """Handle a metacommand in the session.
 
     This function be called to execute a metacommand in the session.
@@ -107,7 +113,11 @@ def pytest_session_handle_metacommand(config: pytest.Config, metacommand: metaco
 
 
 @pytest.hookspec()
-def pytest_worker_handle_command(config: pytest.Config, command: types.Command):
+def pytest_worker_handle_command(
+    config: pytest.Config,
+    command: types.Command,
+    event_sender: types.EventSender
+):
     """Handle a command on the worker.
 
     This function be called to execute a command in the worker.
@@ -118,7 +128,11 @@ def pytest_worker_handle_command(config: pytest.Config, command: types.Command):
 
 
 @pytest.hookspec()
-def pytest_worker_handle_metacommand(config: pytest.Config, metacommand: metacommands.WorkerMetaCommand):
+def pytest_worker_handle_metacommand(
+    config: pytest.Config,
+    metacommand: metacommands.WorkerMetaCommand,
+    event_sender: types.EventSender,
+):
     """Handle a metacommand on the worker.
 
     This function will be called to execute a metacommand in the worker.

@@ -4,7 +4,10 @@ import pytest
 
 from ydist import types as ydist_types
 
-from ydist_resource import hooks
+from ydist_resource import (
+    hooks,
+    worker_plugin,
+)
 from ydist_resource.scheduler import Scheduler
 
 from ydist_resource.events import (
@@ -15,7 +18,16 @@ from ydist_resource.commands import (
     pytest_ydist_command_to_serializable,
     pytest_ydist_command_from_serializable,
 )
-from ydist_resource.worker_plugin import pytest_worker_handle_command
+from ydist_resource.types import (
+    pytest_ydist_resource_token_to_serializable,
+    pytest_ydist_resource_token_from_serializable,
+)
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config):
+    if config.getvalue('ydist_worker_addr'):
+        session = worker_plugin.ResourceWorkerPlugin(config)
+        config.pluginmanager.register(session, 'pytest_ydist_resource_worker_plugin')
 
 @pytest.hookimpl
 def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
@@ -34,5 +46,6 @@ _ = (
     pytest_ydist_event_from_serializable,
     pytest_ydist_command_to_serializable,
     pytest_ydist_command_from_serializable,
-    pytest_worker_handle_command,
+    pytest_ydist_resource_token_to_serializable,
+    pytest_ydist_resource_token_from_serializable,
 )

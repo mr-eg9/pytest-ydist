@@ -77,7 +77,12 @@ class Scheduler(ydist_types.Scheduler):
 
 
     def reschedule(self) -> ydist_types.Schedule:
-        # TODO: Optimize the scheduler a bit further
+        # TODO: Change scheduling to:
+        #  1. Ensure all workers have 1 item
+        #  2. Ensure all workers have 2 items
+        #  3. <...>
+        #  Also remember to optimize, so that workers can be reassigned tasks they can run
+        #   with the items allready allocated (if any)
         schedule = ydist_types.Schedule()
 
         all_idle = True
@@ -87,8 +92,8 @@ class Scheduler(ydist_types.Scheduler):
             if command_count > 0:
                 all_idle = False
 
-            if command_count < 3:
-                for collection_ids in list(self.remaining_item_idx_by_collection_ids.keys()):
+            for collection_ids in list(self.remaining_item_idx_by_collection_ids.keys()):
+                if command_count < 1:
                     tokens = self._get_token_set_to_use_for_collection_ids(
                         collection_ids,
                         self.available_tokens,
@@ -139,7 +144,9 @@ class Scheduler(ydist_types.Scheduler):
         first_test_idx = self.remaining_item_idx_by_collection_ids[collection_id][0]
         first_test = self.items[first_test_idx]
         token_sets = self.config.hook.pytest_ydist_resource_tokens_from_test_item(
-            first_test=first_test, tokens=tokens)
+            item=first_test,
+            tokens=tokens,
+        )
 
         if any(token_set is None for token_set in token_sets):
             return None

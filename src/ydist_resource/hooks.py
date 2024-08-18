@@ -51,3 +51,17 @@ def pytest_ydist_resource_tokens_from_test_item(
     ...
 
 
+@pytest.hookspec(firstresult=True)
+def pytest_ydist_resource_token_to_serializable(
+    config: pytest.Config,
+    token: types.Token,
+) -> dict:
+    ...
+
+
+@pytest.hookspec(firstresult=True)
+def pytest_ydist_resource_token_from_serializable(
+    config: pytest.Config,
+    token_data: dict,
+) -> types.Token:
+    ...

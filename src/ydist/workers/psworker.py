@@ -14,7 +14,7 @@ import warnings
 import importlib
 
 from ydist.metacommands import WorkerMetaCommand
-from ydist.types import MetaCommand, Worker, Event, TestIdx, CommandStatus, Command
+from ydist.types import EventSender, MetaCommand, Worker, Event, TestIdx, CommandStatus, Command
 from ydist import commands
 from ydist import events
 
@@ -56,7 +56,6 @@ class ProccessWorker(Worker):
             command=command,
         )
         assert command_data is not None, f'Unable to serialize {command}'
-        print(command_data)
         json_data = self.json_encoder.encode(command_data)
         self.conn.send(bytes(json_data, 'utf-8'))
         self.submitted_commands += 1
@@ -162,6 +161,26 @@ class EventReceiver(threading.Thread):
         self.has_events.set()
 
 
+class WorkerEventSender(EventSender):
+    def __init__(self, config: pytest.Config, conn: socket.socket):
+        self.config = config
+        self.json_encoder = json.JSONEncoder()
+        self.conn = conn
+
+    def send(self, event: Event):
+        """Send an event from this worker.
+
+        This is the only mandatory part of the `WorkerSession` API.
+        """
+        event_data = self.config.hook.pytest_ydist_event_to_serializable(
+            config=self.config,
+            event=event,
+        )
+        assert event_data is not None, f'Failed to serialize event {event}'
+        json_data = self.json_encoder.encode(event_data)
+        self.conn.send(bytes(json_data, 'utf-8'))
+
+
 class WorkerProccess:
     def __init__(self, config):
         self.config = config
@@ -169,11 +188,12 @@ class WorkerProccess:
         worker_socket_addr = config.getvalue('ydist_worker_addr')
         addr, port = worker_socket_addr.split(':')
         self.conn = socket.create_connection((addr, int(port)))
-        self.json_encoder = json.JSONEncoder()
+        self.event_sender = WorkerEventSender(config, self.conn)
         self.json_decoder = json.JSONDecoder()
         self.should_shutdown = False
         self.command_data_buffer = ''
         self.pending_test = None
+
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtestloop(self, session):
@@ -198,7 +218,11 @@ class WorkerProccess:
                 )
 
                 self._send_command_changed_status(command, CommandStatus.InProgress)
-                self.config.hook.pytest_worker_handle_command(config=self.config, command=command)
+                self.config.hook.pytest_worker_handle_command(
+                    config=self.config,
+                    command=command,
+                    event_sender=self.event_sender,
+                )
                 self._send_command_changed_status(command, CommandStatus.Completed)
 
         self._send_event(events.WorkerShutdown)
@@ -206,7 +230,13 @@ class WorkerProccess:
 
 
     @pytest.hookimpl()
-    def pytest_worker_handle_command(self, command: Command):
+    def pytest_worker_handle_command(
+        self,
+        config: pytest.Config,
+        command: Command,
+        event_sender: EventSender,
+    ):
+        _ = config, event_sender
         match command:
             case commands.ShutdownWorker():
                 self.should_shutdown = True
@@ -229,13 +259,7 @@ class WorkerProccess:
 
     def _send_event(self, event_cls: Type[Event], **kwargs):
         event = event_cls(worker_id=self.worker_id, **kwargs)
-        event_data = self.config.hook.pytest_ydist_event_to_serializable(
-            config=self.config,
-            event=event,
-        )
-        assert event_data is not None, f'Failed to serialize event {event}'
-        json_data = self.json_encoder.encode(event_data)
-        self.conn.send(bytes(json_data, 'utf-8'))
+        self.event_sender.send(event)
 
 
     def _exec_run_tests(self, command: commands.RunTests):

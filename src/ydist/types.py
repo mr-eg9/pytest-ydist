@@ -92,3 +92,8 @@ class Scheduler(abc.ABC):
     def notify(self, event: Event) -> bool:
         pass
 
+
+class EventSender(abc.ABC):
+    @abc.abstractmethod
+    def send(self, event: Event):
+        pass
