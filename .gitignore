@@ -1,5 +1,6 @@
 src/ydist/_version.py
 **/__pycache__
 **/*.egg-info
-venv
+venv*
+output.prof
 .pytest_cache
