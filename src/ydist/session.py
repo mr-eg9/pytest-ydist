@@ -57,8 +57,8 @@ class Session:
         return True
 
     @pytest.hookimpl
-    def pytest_session_handle_event(self, event: Event):
-        if event == events.WorkerShutdown:
+    def pytest_session_handle_event(self, config: pytest.Config, event: Event):
+        if isinstance(event, events.WorkerShutdown):
             self.worker_destroy_queue.append(event.worker_id)
 
     @pytest.hookimpl
@@ -111,7 +111,10 @@ class Session:
     ):
         for metacommand in schedule.new_metacommands:
             if isinstance(metacommand, SessionMetaCommand):
-                config.hook.pytest_session_handle_metacommand(metacommand=metacommand)
+                config.hook.pytest_session_handle_metacommand(
+                    config=config,
+                    metacommand=metacommand,
+                )
             elif isinstance(metacommand, WorkerMetaCommand):
                 workers[metacommand.worker_id].submit_new_metacommand(metacommand)
             else:
@@ -136,7 +139,7 @@ class Session:
 
         for worker in workers.values():
             while (event:=worker.pop_event()) is not None:
-                config.hook.pytest_session_handle_event(event=event)
+                config.hook.pytest_session_handle_event(config=config, event=event)
                 reschedule |= scheduler.notify(event)
 
         return reschedule

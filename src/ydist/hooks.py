@@ -28,7 +28,7 @@ def pytest_ydist_setup_scheduler(session, config) -> types.Scheduler:
 # ------------------------------------------------------------------------------
 
 @pytest.hookspec(firstresult=True)
-def pytest_ydist_event_to_serializable(event: types.Event) -> dict:
+def pytest_ydist_event_to_serializable(config: pytest.Config, event: types.Event) -> dict:
     """Convert a ydist event to a serializable type.
 
     Typically this is a dictionary of simple types.
@@ -37,7 +37,7 @@ def pytest_ydist_event_to_serializable(event: types.Event) -> dict:
 
 
 @pytest.hookspec(firstresult=True)
-def pytest_ydist_event_from_serializable(event_data: dict) -> types.Event:
+def pytest_ydist_event_from_serializable(config: pytest.Config, event_data: dict) -> types.Event:
     """Convert a serializable type representing an event back into an event.
 
     Note that the `kind` element in the dictionary will contain the name of the type.
@@ -46,7 +46,7 @@ def pytest_ydist_event_from_serializable(event_data: dict) -> types.Event:
 
 
 @pytest.hookspec(firstresult=True)
-def pytest_ydist_command_to_serializable(command: types.Command) -> dict:
+def pytest_ydist_command_to_serializable(config: pytest.Config, command: types.Command) -> dict:
     """Convert a command event to a serializable type.
 
     Typically this is a dictionary of simple types.
@@ -55,7 +55,7 @@ def pytest_ydist_command_to_serializable(command: types.Command) -> dict:
 
 
 @pytest.hookspec(firstresult=True)
-def pytest_ydist_command_from_serializable(command_data: dict) -> types.Command:
+def pytest_ydist_command_from_serializable(config: pytest.Config, command_data: dict) -> types.Command:
     """Convert a serializable type representing an a command back into a command.
 
     Note that the `kind` element in the dictionary will contain the name of the type.
@@ -64,7 +64,7 @@ def pytest_ydist_command_from_serializable(command_data: dict) -> types.Command:
 
 
 @pytest.hookspec(firstresult=True)
-def pytest_ydist_metacommand_to_serializable(metacommand: types.MetaCommand) -> dict:
+def pytest_ydist_metacommand_to_serializable(config: pytest.Config, metacommand: types.MetaCommand) -> dict:
     """Convert a ydist metacommand to a serializable type.
 
     Typically this is a dictionary of simple types.
@@ -73,7 +73,7 @@ def pytest_ydist_metacommand_to_serializable(metacommand: types.MetaCommand) -> 
 
 
 @pytest.hookspec(firstresult=True)
-def pytest_ydist_metacommand_from_serializable(metacommand_data: dict) -> types.MetaCommand:
+def pytest_ydist_metacommand_from_serializable(config: pytest.Config, metacommand_data: dict) -> types.MetaCommand:
     """Convert a serializable type representing an metacommand back into a metacommand.
 
     Note that the `kind` element in the dictionary will contain the name of the type.
@@ -86,7 +86,7 @@ def pytest_ydist_metacommand_from_serializable(metacommand_data: dict) -> types.
 
 
 @pytest.hookspec()
-def pytest_session_handle_event(event: types.Event):
+def pytest_session_handle_event(config: pytest.Config, event: types.Event):
     """Handle an event in the session.
 
     This function will be called for all generated events.
@@ -96,7 +96,7 @@ def pytest_session_handle_event(event: types.Event):
 
 
 @pytest.hookspec()
-def pytest_session_handle_metacommand(metacommand: metacommands.SessionMetaCommand):
+def pytest_session_handle_metacommand(config: pytest.Config, metacommand: metacommands.SessionMetaCommand):
     """Handle a metacommand in the session.
 
     This function be called to execute a metacommand in the session.
@@ -107,7 +107,7 @@ def pytest_session_handle_metacommand(metacommand: metacommands.SessionMetaComma
 
 
 @pytest.hookspec()
-def pytest_worker_handle_command(command: types.Command):
+def pytest_worker_handle_command(config: pytest.Config, command: types.Command):
     """Handle a command on the worker.
 
     This function be called to execute a command in the worker.
@@ -118,7 +118,7 @@ def pytest_worker_handle_command(command: types.Command):
 
 
 @pytest.hookspec()
-def pytest_worker_handle_metacommand(metacommand: metacommands.WorkerMetaCommand):
+def pytest_worker_handle_metacommand(config: pytest.Config, metacommand: metacommands.WorkerMetaCommand):
     """Handle a metacommand on the worker.
 
     This function will be called to execute a metacommand in the worker.

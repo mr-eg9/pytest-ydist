@@ -27,11 +27,6 @@ class WorkerShutdown(Event):
 class TestComplete(Event):
     test_idx: TestIdx
 
-
-@dataclass
-class CustomEvent(Event):
-    data: Any
-
 @dataclass
 class SessionStart(Event):
     pass
@@ -88,7 +83,6 @@ pytest_ydist_events = {
     WorkerStarted,
     WorkerShutdown,
     TestComplete,
-    CustomEvent,
     SessionStart,
     SessionFinish,
     Collection,
@@ -102,7 +96,7 @@ pytest_ydist_events = {
 
 
 @pytest.hookimpl()
-def pytest_ydist_event_to_serializable(event: Event) -> dict | None:
+def pytest_ydist_event_to_serializable(config: pytest.Config, event: Event) -> dict | None:
     if event.__class__ in pytest_ydist_events:
         event_data = asdict(event)
         event_data['kind'] = event.__class__.__name__
@@ -112,7 +106,7 @@ def pytest_ydist_event_to_serializable(event: Event) -> dict | None:
 
 
 @pytest.hookimpl()
-def pytest_ydist_event_from_serializable(event_data: dict) -> Event | None:
+def pytest_ydist_event_from_serializable(config: pytest.Config, event_data: dict) -> Event | None:
     kind = event_data.pop('kind')
     event_cls = next((e for e in pytest_ydist_events if e.__name__ == kind), None)
     if event_cls is None:

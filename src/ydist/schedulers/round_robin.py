@@ -51,7 +51,7 @@ class RoundRobinScheduler(Scheduler):
         if isinstance(event, events.WorkerShutdown):
             remaining_commands = self.schedule_tracker.remove_worker(event.worker_id)
             match remaining_commands:
-                case [ShutdownCommand]:
+                case [commands.ShutdownWorker()]:
                     pass
                 case []:
                     pass

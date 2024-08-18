@@ -23,7 +23,7 @@ pytest_ydist_commands = {
 
 
 @pytest.hookimpl()
-def pytest_ydist_command_to_serializable(command: Command) -> dict | None:
+def pytest_ydist_command_to_serializable(config: pytest.Config, command: Command) -> dict | None:
     if command.__class__ in pytest_ydist_commands:
         command_data = asdict(command)
         command_data['status'] = command_data['status'].name
@@ -32,10 +32,11 @@ def pytest_ydist_command_to_serializable(command: Command) -> dict | None:
 
 
 @pytest.hookimpl()
-def pytest_ydist_command_from_serializable(command_data: dict) -> Command | None:
-    kind = command_data.pop('kind')
+def pytest_ydist_command_from_serializable(config: pytest.Config, command_data: dict) -> Command | None:
+    kind = command_data['kind']
     event_cls = next((e for e in pytest_ydist_commands if e.__name__ == kind), None)
     if event_cls is None:
         return
+    command_data.pop('kind')
     command_data['status'] = CommandStatus[command_data['status']]
     return event_cls(**command_data)

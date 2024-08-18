@@ -29,7 +29,7 @@ class Event(abc.ABC):
 
 @dataclass
 class Command(abc.ABC):
-    seq_nr: SeqNr
+    seq_nr: SeqNr | None  # May be None, in the case where this command is embedded in another command
     worker_id: WorkerId
     status: CommandStatus
 
@@ -77,7 +77,7 @@ class Worker(abc.ABC):
 
 class Scheduler(abc.ABC):
     @abc.abstractmethod
-    def __init__(self, items, workers):
+    def __init__(self, session, config):
         pass
 
     @abc.abstractmethod

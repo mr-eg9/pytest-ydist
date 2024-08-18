@@ -51,7 +51,10 @@ class ProccessWorker(Worker):
 
 
     def submit_new_command(self, command: Command):
-        command_data = self.config.hook.pytest_ydist_command_to_serializable(command=command)
+        command_data = self.config.hook.pytest_ydist_command_to_serializable(
+            config=self.config,
+            command=command,
+        )
         assert command_data is not None, f'Unable to serialize {command}'
         json_data = self.json_encoder.encode(command_data)
         self.conn.send(bytes(json_data, 'utf-8'))
@@ -130,7 +133,10 @@ class EventReceiver(threading.Thread):
 
     def run(self):
         while (event_data := self._read_event_json()) is not None:
-            event = self.config.hook.pytest_ydist_event_from_serializable(event_data=event_data)
+            event = self.config.hook.pytest_ydist_event_from_serializable(
+                config=self.config,
+                event_data=event_data,
+            )
             assert event is not None, f'Failed to decode event_data: {event_data}'
             self.event_queue.append(event)
             self.has_events.set()
@@ -177,15 +183,21 @@ class WorkerProccess:
             if command_data is None:
                 continue
 
+            # TODO: All metacommands should be handled before any normal commands are,
+            #  or metacommands should be executed in a separate thread
             if command_data.get('is_meta', False):
                 command = self.config.hook.pytest_ydist_metacommand_from_serializable(
-                    command_data=command_data)
+                    config=self.config,
+                    command_data=command_data
+                )
             else:
                 command = self.config.hook.pytest_ydist_command_from_serializable(
-                    command_data=command_data)
+                    config=self.config,
+                    command_data=command_data
+                )
 
                 self._send_command_changed_status(command, CommandStatus.InProgress)
-                self.config.hook.pytest_worker_handle_command(command=command)
+                self.config.hook.pytest_worker_handle_command(config=self.config, command=command)
                 self._send_command_changed_status(command, CommandStatus.Completed)
 
         self._send_event(events.WorkerShutdown)
@@ -206,19 +218,6 @@ class WorkerProccess:
     def pytest_worker_handle_metacommand(self, metacommand: WorkerMetaCommand):
         raise NotImplementedError('Metacommands not yet implemented for this worker')
 
-    @pytest.hookimpl()
-    def pytest_ydist_metacommand_from_serializable(
-        self,
-        metacommand_data: dict
-    ) -> MetaCommand | None:
-        """Convert a serializable type representing an metacommand back into a metacommand.
-
-        Note that the `kind` element in the dictionary will contain the name of the type.
-        """
-        # Placeholder, will be used for the `WorkSteal` metacommand, whenever that gets implemented.
-        _ = metacommand_data
-
-
     def _send_command_changed_status(self, command, new_status):
         self._send_event(
             events.CommandChangedStatus,
@@ -229,7 +228,10 @@ class WorkerProccess:
 
     def _send_event(self, event_cls: Type[Event], **kwargs):
         event = event_cls(worker_id=self.worker_id, **kwargs)
-        event_data = self.config.hook.pytest_ydist_event_to_serializable(event=event)
+        event_data = self.config.hook.pytest_ydist_event_to_serializable(
+            config=self.config,
+            event=event,
+        )
         assert event_data is not None, f'Failed to serialize event {event}'
         json_data = self.json_encoder.encode(event_data)
         self.conn.send(bytes(json_data, 'utf-8'))
