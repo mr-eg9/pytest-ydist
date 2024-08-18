@@ -66,3 +66,7 @@ class ResourceWorkerPlugin:
         self.tokens = new_tokens
         if len(tokens_to_release) > 0:
             event_sender.send(events.TokensReleased(worker_id, tokens_to_release))
+
+    @pytest.fixture
+    def ydist_resources(self) -> set[types.Token]:
+        return self.tokens

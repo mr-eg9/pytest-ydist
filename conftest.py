@@ -20,12 +20,14 @@ def pytest_ydist_resource_get_tokens() -> set[yr_types.Token] | None:
 
 @pytest.hookimpl()
 def pytest_ydist_resource_collection_id_from_test_item(item: pytest.Item) -> yr_types.CollectionId | None:
+    id_nu = 0
     if 'foo' in item.name:
-        return yr_types.CollectionId(1)
+        id_nu |= 1
     if 'bar' in item.name:
-        return yr_types.CollectionId(2)
+        id_nu |= 2
     if 'baz' in item.name:
-        return yr_types.CollectionId(3)
+        id_nu |= 4
+    return yr_types.CollectionId(id_nu)
 
 
 @pytest.hookimpl()
@@ -33,12 +35,21 @@ def pytest_ydist_resource_tokens_from_test_item(
     item: pytest.Item,
     tokens: set[yr_types.Token],
 ) -> set[yr_types.Token] | None:
-    if 'foo' in item.name and foo_token in tokens:
-        return {foo_token}
+
+    selected_tokens = set()
+    if 'foo' in item.name:
+        if foo_token not in tokens:
+            return None
+        selected_tokens.add(foo_token)
+
     if 'bar' in item.name and bar_token in tokens:
-        return {bar_token}
+        selected_tokens.add(bar_token)
+        if bar_token not in tokens:
+            return None
+
     if 'baz' in item.name and baz_token in tokens:
-        return {baz_token}
-    return set()
+        selected_tokens.add(baz_token)
+        if baz_token not in tokens:
+            return None
 
-
+    return tokens

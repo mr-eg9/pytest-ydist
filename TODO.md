@@ -8,6 +8,8 @@
     - [x] Passing Test data back to main proccess for reporting etc...
  - [x] Adding hooks for different features
  - [ ] Resource Scheduler -- Could be done in a separate project
+    - [ ]Need to fix `pytest_ydist_resource_tokens_from_test_item`, this has 3 valid return types:
+        - DontCare, NotAvailable, Tokens
  - [ ] Metacommands / out-of-band execution
  - [ ] Work stealing
  - [ ] Standardized Benchmarks
