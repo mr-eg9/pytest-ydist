@@ -11,12 +11,13 @@ pytest_plugins = ("ydist")
 
 # Let pytest discover the hooks we have implemented
 from ydist.events import (
-    pytest_ydist_event_to_serializable,
-    pytest_ydist_event_from_serializable,
+    pytest_ydist_register_events,
 )
 from ydist.commands import (
-    pytest_ydist_command_to_serializable,
-    pytest_ydist_command_from_serializable,
+    pytest_ydist_register_commands,
+)
+from ydist.metacommands import (
+    pytest_ydist_register_metacommands,
 )
 
 @pytest.hookimpl
@@ -93,8 +94,7 @@ def pytest_ydist_setup_scheduler(session, config) -> types.Scheduler | None:
 
 # Suppress unused warnings, as these hooks just need to be imported to be discovered by pytest
 _ = (
-    pytest_ydist_event_to_serializable,
-    pytest_ydist_event_from_serializable,
-    pytest_ydist_command_to_serializable,
-    pytest_ydist_command_from_serializable,
+    pytest_ydist_register_events,
+    pytest_ydist_register_commands,
+    pytest_ydist_register_metacommands,
 )

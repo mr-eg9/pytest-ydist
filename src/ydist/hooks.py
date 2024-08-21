@@ -27,58 +27,33 @@ def pytest_ydist_setup_scheduler(session, config) -> types.Scheduler:
 # Used to deal with serialization / deserialization of custom Command/Event types
 # ------------------------------------------------------------------------------
 
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_event_to_serializable(config: pytest.Config, event: types.Event) -> dict:
-    """Convert a ydist event to a serializable type.
 
-    Typically this is a dictionary of simple types.
+@pytest.hookspec
+def pytest_ydist_register_events() -> list[type[types.Event]]:
+    """Register custom event types for use with ydist.
+
+    This is used by ydist to be able to deserialize events.
     """
     ...
 
 
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_event_from_serializable(config: pytest.Config, event_data: dict) -> types.Event:
-    """Convert a serializable type representing an event back into an event.
+@pytest.hookspec
+def pytest_ydist_register_commands() -> list[type[types.Command]]:
+    """Register command types for use with ydist.
 
-    Note that the `kind` element in the dictionary will contain the name of the type.
+    This is used by ydist to be able to deserialize commands.
     """
     ...
 
 
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_command_to_serializable(config: pytest.Config, command: types.Command) -> dict:
-    """Convert a command event to a serializable type.
+@pytest.hookspec
+def pytest_ydist_register_metacommands() -> list[type[types.MetaCommand]]:
+    """Register metacommand types for use with ydist.
 
-    Typically this is a dictionary of simple types.
+    This is used by ydist to be able to deserialize metacommands.
     """
     ...
 
-
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_command_from_serializable(config: pytest.Config, command_data: dict) -> types.Command:
-    """Convert a serializable type representing an a command back into a command.
-
-    Note that the `kind` element in the dictionary will contain the name of the type.
-    """
-    ...
-
-
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_metacommand_to_serializable(config: pytest.Config, metacommand: types.MetaCommand) -> dict:
-    """Convert a ydist metacommand to a serializable type.
-
-    Typically this is a dictionary of simple types.
-    """
-    ...
-
-
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_metacommand_from_serializable(config: pytest.Config, metacommand_data: dict) -> types.MetaCommand:
-    """Convert a serializable type representing an metacommand back into a metacommand.
-
-    Note that the `kind` element in the dictionary will contain the name of the type.
-    """
-    ...
 
 # ------------------------------------------------------------------------------
 # Used to handle custom events, commands or metacommands

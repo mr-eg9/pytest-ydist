@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from dataclasses import dataclass
-from ydist.types import MetaCommand, WorkerId, SeqNr
-import abc
+from ydist.types import MetaCommand, WorkerId
 
 
 @dataclass
@@ -13,6 +14,18 @@ class SessionMetaCommand(MetaCommand):
 @dataclass
 class WorkerMetaCommand(MetaCommand):
     worker_id: WorkerId
+
+
+pytest_ydist_metacommands: set[type[MetaCommand]] = set()
+
+
+@pytest.hookimpl()
+def pytest_ydist_register_metacommands() -> list[type[MetaCommand]]:
+    """Register metacommand types for use with ydist.
+
+    This is used by ydist to be able to deserialize metacommands.
+    """
+    return list(pytest_ydist_metacommands)
 
 
 # ----------------------------------------------------------------------------------------

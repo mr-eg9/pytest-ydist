@@ -26,14 +26,13 @@ class ResourceWorkerPlugin:
     ):
         match command:
             case commands.RunTestsWithTokens():
-                tokens = command.tokens
                 run_test_command = command.run_test_command
 
                 # Execute the first test with the resources we currently have
                 self._exec_first_test(config, run_test_command, event_sender)
 
                 # Update the tokens currently in use by this worker
-                self._update_tokens(tokens, event_sender, command.worker_id)
+                self._update_tokens(command.tokens, event_sender, command.worker_id)
 
                 # Execute the remaining tests
                 config.hook.pytest_worker_handle_command(

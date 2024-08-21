@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from dataclasses import dataclass, asdict
-from typing import Any
+from typing import Any, Self
 
 from ydist.types import SeqNr, CommandStatus, Event, TestIdx
 
@@ -11,6 +11,16 @@ from ydist.types import SeqNr, CommandStatus, Event, TestIdx
 class CommandChangedStatus(Event):
     seq_nr: SeqNr
     new_status: CommandStatus
+
+    @classmethod
+    def from_serializable(cls, data: dict) -> Self:
+        data['new_status'] = CommandStatus[data['new_status']]
+        return cls(**data)
+
+    def to_serializable(self) -> dict:
+        data = asdict(self)
+        data['new_status'] = data['new_status'].name
+        return data
 
 
 @dataclass
@@ -78,7 +88,7 @@ class SerializedWarningMessage:
 
 
 # All events that are part of ydist
-pytest_ydist_events = {
+pytest_ydist_events: set[type[Event]] = {
     CommandChangedStatus,
     WorkerStarted,
     WorkerShutdown,
@@ -96,21 +106,5 @@ pytest_ydist_events = {
 
 
 @pytest.hookimpl()
-def pytest_ydist_event_to_serializable(config: pytest.Config, event: Event) -> dict | None:
-    if event.__class__ in pytest_ydist_events:
-        event_data = asdict(event)
-        event_data['kind'] = event.__class__.__name__
-        if isinstance(event, CommandChangedStatus):
-            event_data['new_status'] = event_data['new_status'].name
-        return event_data
-
-
-@pytest.hookimpl()
-def pytest_ydist_event_from_serializable(config: pytest.Config, event_data: dict) -> Event | None:
-    kind = event_data.pop('kind')
-    event_cls = next((e for e in pytest_ydist_events if e.__name__ == kind), None)
-    if event_cls is None:
-        return
-    if event_cls is CommandChangedStatus:
-        event_data['new_status'] = CommandStatus[event_data['new_status']]
-    return event_cls(**event_data)
+def pytest_ydist_register_events() -> list[type[Event]]:
+    return list(pytest_ydist_events)

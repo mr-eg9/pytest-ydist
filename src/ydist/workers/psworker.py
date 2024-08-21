@@ -51,12 +51,12 @@ class ProccessWorker(Worker):
 
 
     def submit_new_command(self, command: Command):
-        command_data = self.config.hook.pytest_ydist_command_to_serializable(
-            config=self.config,
-            command=command,
-        )
-        assert command_data is not None, f'Unable to serialize {command}'
-        json_data = self.json_encoder.encode(command_data)
+        command_data = command.to_serializable()
+        command_data['kind'] = command.__class__.__qualname__
+        try:
+            json_data = self.json_encoder.encode(command_data)
+        except TypeError as e:
+            raise TypeError(f'Failed to turn {command} into a serializable object') from e
         self.conn.send(bytes(json_data, 'utf-8'))
         self.submitted_commands += 1
 
@@ -130,13 +130,17 @@ class EventReceiver(threading.Thread):
         self.conn = conn
         self.data_buffer = ''
         self.json_decoder = json.JSONDecoder()
+        self.event_types = {
+            event_cls.__qualname__: event_cls
+            for registered_event_types in self.config.hook.pytest_ydist_register_events()
+            for event_cls in registered_event_types
+        }
 
     def run(self):
         while (event_data := self._read_event_json()) is not None:
-            event = self.config.hook.pytest_ydist_event_from_serializable(
-                config=self.config,
-                event_data=event_data,
-            )
+            kind = event_data.pop('kind')
+            event_cls: Event = self.event_types[kind]
+            event = event_cls.from_serializable(event_data)
             assert event is not None, f'Failed to decode event_data: {event_data}'
             self.event_queue.append(event)
             self.has_events.set()
@@ -172,11 +176,8 @@ class WorkerEventSender(EventSender):
 
         This is the only mandatory part of the `WorkerSession` API.
         """
-        event_data = self.config.hook.pytest_ydist_event_to_serializable(
-            config=self.config,
-            event=event,
-        )
-        assert event_data is not None, f'Failed to serialize event {event}'
+        event_data = event.to_serializable()
+        event_data['kind'] = event.__class__.__qualname__
         json_data = self.json_encoder.encode(event_data)
         self.conn.send(bytes(json_data, 'utf-8'))
 
@@ -193,6 +194,16 @@ class WorkerProccess:
         self.should_shutdown = False
         self.command_data_buffer = ''
         self.pending_test = None
+        self.command_types = {
+            command_cls.__qualname__: command_cls
+            for registered_command_types in self.config.hook.pytest_ydist_register_commands()
+            for command_cls in registered_command_types
+        }
+        self.metacommand_types = {
+            metacommand_cls.__qualname__: metacommand_cls
+            for registered_metacommand_types in self.config.hook.pytest_ydist_register_metacommands()
+            for metacommand_cls in registered_metacommand_types
+        }
 
 
     @pytest.hookimpl(tryfirst=True)
@@ -207,16 +218,15 @@ class WorkerProccess:
             # TODO: All metacommands should be handled before any normal commands are,
             #  or metacommands should be executed in a separate thread
             if command_data.get('is_meta', False):
-                command = self.config.hook.pytest_ydist_metacommand_from_serializable(
-                    config=self.config,
-                    command_data=command_data
-                )
+                command_data.pop('is_meta')
+                kind = command_data.pop('kind')
+                metacommand_cls = self.metacommand_types[kind]
+                metacommand = metacommand_cls.from_serializable(command_data)
+                self.config.hook.pytest_worker_handle_metacommand(metacommand)
             else:
-                command = self.config.hook.pytest_ydist_command_from_serializable(
-                    config=self.config,
-                    command_data=command_data
-                )
-
+                kind = command_data.pop('kind')
+                command_cls = self.command_types[kind]
+                command = command_cls.from_serializable(command_data)
                 self._send_command_changed_status(command, CommandStatus.InProgress)
                 self.config.hook.pytest_worker_handle_command(
                     config=self.config,
@@ -246,7 +256,12 @@ class WorkerProccess:
                 self._exec_run_tests(command)
 
     @pytest.hookimpl()
-    def pytest_worker_handle_metacommand(self, metacommand: WorkerMetaCommand):
+    def pytest_worker_handle_metacommand(
+        self,
+        config: pytest.Config,
+        metacommand: WorkerMetaCommand,
+        event_sender: EventSender,
+    ):
         raise NotImplementedError('Metacommands not yet implemented for this worker')
 
     def _send_command_changed_status(self, command, new_status):

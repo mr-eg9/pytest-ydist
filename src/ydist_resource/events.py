@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from typing import Self
 
 import pytest
 
@@ -15,47 +16,25 @@ from ydist_resource import types
 class TokensReleased(ydist_events.Event):
     tokens: set[types.Token]
 
+    @classmethod
+    def from_serializable(cls, data: dict) -> Self:
+        tokens = set()
+        for token_data in data.pop('tokens'):
+            kind = token_data.pop('kind')
+            token_cls = types._token_types[kind]
+            tokens.add(token_cls(**token_data))
+        data['tokens'] = tokens
+        return super().from_serializable(data)
 
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_event_to_serializable(
-    config: pytest.Config,
-    event: ydist_types.Event
-) -> dict | None:
-    """Convert a ydist event to a serializable type.
-
-    Typically this is a dictionary of simple types.
-    """
-    _ = config
-    match event:
-        case TokensReleased():
-            tokens = [
-                config.hook.pytest_ydist_resource_token_to_serializable(config=config, token=token)
-                for token in event.tokens
-            ]
-            event_data = asdict(event)
-            event_data['kind'] = TokensReleased.__name__
-            event_data['tokens'] = tokens
-            return event_data
+    def to_serializable(self) -> dict:
+        data = super().to_serializable()
+        data['tokens'] = [
+            {'kind': token.__class__.__qualname__, **token.to_serializable()}
+            for token in data['tokens']
+        ]
+        return data
 
 
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_event_from_serializable(
-    config: pytest.Config,
-    event_data: dict,
-) -> ydist_types.Event | None:
-    """Convert a serializable type representing an event back into an event.
-
-    Note that the `kind` element in the dictionary will contain the name of the type.
-    """
-    _ = config
-    match event_data['kind']:
-        case TokensReleased.__name__:
-            event_data.pop('kind')
-            event_data['tokens'] = {
-                config.hook.pytest_ydist_resource_token_from_serializable(
-                    config=config,
-                    token_data=token_data,
-                )
-                for token_data in event_data['tokens']
-            }
-            return TokensReleased(**event_data)
+@pytest.hookimpl()
+def pytest_ydist_register_events() -> list[type[ydist_types.Event]]:
+    return [TokensReleased]

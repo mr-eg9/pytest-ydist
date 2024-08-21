@@ -51,17 +51,10 @@ def pytest_ydist_resource_tokens_from_test_item(
     ...
 
 
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_resource_token_to_serializable(
-    config: pytest.Config,
-    token: types.Token,
-) -> dict:
-    ...
+@pytest.hookspec
+def pytest_ydist_resource_register_tokens() -> list[type[types.Token]]:
+    """Register custom token types for use with ydist resource.
 
-
-@pytest.hookspec(firstresult=True)
-def pytest_ydist_resource_token_from_serializable(
-    config: pytest.Config,
-    token_data: dict,
-) -> types.Token:
+    This is used by ydist resource to be able to deserialize tokens.
+    """
     ...
