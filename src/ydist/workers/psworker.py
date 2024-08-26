@@ -63,6 +63,10 @@ class ProccessWorker(Worker):
     def submit_new_metacommand(self, metacommand: WorkerMetaCommand):
         raise NotImplementedError('Worker metacommands are not yet implemented')
 
+    def terminate(self):
+        self.conn.close()
+        self.worker_ps.terminate()
+
     def pop_event(self) -> Event | None:
         if len(self.event_receiver.event_queue) > 0:
             # NOTE: deque.popleft is threadsafe from outside the thread
@@ -254,6 +258,10 @@ class WorkerProccess:
                     self._exec_test(self.pending_test, None)
             case commands.RunTests():
                 self._exec_run_tests(command)
+            case commands.RunPendingTest():
+                assert self.pending_test is not None, 'Tried to run the pending test, but this test does not exist'
+                self._exec_test(self.pending_test, None)
+                self.pending_test = None
 
     @pytest.hookimpl()
     def pytest_worker_handle_metacommand(

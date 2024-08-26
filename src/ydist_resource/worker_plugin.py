@@ -26,6 +26,7 @@ class ResourceWorkerPlugin:
     ):
         match command:
             case commands.RunTestsWithTokens():
+                # print(f'Test {command.run_test_command.tests}: {command.tokens}')
                 run_test_command = command.run_test_command
 
                 # Execute the first test with the resources we currently have
@@ -40,6 +41,21 @@ class ResourceWorkerPlugin:
                     command=command.run_test_command,
                     event_sender=event_sender,
                 )
+            case commands.ReleaseTokens():
+                tokens_to_keep = self.tokens.difference(command.tokens)
+
+                # Execute the pending test
+
+                config.hook.pytest_worker_handle_command(
+                    config=config,
+                    command=ydist_commands.RunPendingTest(
+                        None,
+                        command.worker_id,
+                        ydist_types.CommandStatus.InProgress
+                    ),
+                    event_sender=event_sender,
+                )
+                self._update_tokens(tokens_to_keep, event_sender, command.worker_id)
 
     @staticmethod
     def _exec_first_test(

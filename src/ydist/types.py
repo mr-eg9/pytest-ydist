@@ -94,6 +94,9 @@ class Worker(abc.ABC):
     def is_idle(self) -> bool:
         pass
 
+    @abc.abstractmethod
+    def terminate(self):
+        pass
 
 class Scheduler(abc.ABC):
     @abc.abstractmethod

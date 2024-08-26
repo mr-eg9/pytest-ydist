@@ -28,6 +28,11 @@ class CollectionId:
 #  any token serialization/deserialization takes place
 _token_types = {}
 
+@dataclass
+class ResourcesNotAvailable:
+    """Sentinel type used to indicate that the requested resources are not available."""
+    pass
+
 @pytest.hookspec
 def pytest_ydist_resource_register_tokens() -> list[type[Token]]:
     return [Token]

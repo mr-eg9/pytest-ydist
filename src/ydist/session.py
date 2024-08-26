@@ -38,13 +38,7 @@ class Session:
         for _ in range(self.numworkers):
             self._add_new_worker(config, workers, session)
 
-        scheduler = config.hook.pytest_ydist_setup_scheduler(
-            session=session,
-            config=config,
-        )
-        if scheduler is None:
-            raise ValueError(f'No ydist scheduler specified (--ydist-scheduler)')
-
+        scheduler = self._setup_scheduler(config, session)
         # Handle initial `WorkerCreated` events
         while len(self.ready_workers) < self.numworkers:
             self.handle_events(config, workers, scheduler)
@@ -95,6 +89,15 @@ class Session:
             raise ValueError('No ydist worker specifed (--ydist-worker)')
         workers[worker_id] = worker
 
+    def _setup_scheduler(self, config, session) -> Scheduler:
+        scheduler = config.hook.pytest_ydist_setup_scheduler(
+            session=session,
+            config=config,
+        )
+        if scheduler is None:
+            raise ValueError(f'No ydist scheduler specified (--ydist-scheduler)')
+        return scheduler
+
     def _destroy_done_workers(self, workers: dict[WorkerId, Worker]):
         while (worker_id := self.worker_destroy_queue.popleft()):
             del workers[worker_id]
@@ -107,8 +110,9 @@ class Session:
         all_idle = self._is_all_workers_idle(workers)
         schedule = scheduler.reschedule()
         if all_idle and len(schedule.new_commands) == 0:
-            # raise RuntimeError('Deadlock, due to no items scheduled when all workers idle')
-            pass
+            for worker in workers.values():
+                worker.terminate()
+            raise RuntimeError('Deadlock, due to no items scheduled when all workers idle')
         return schedule
 
     def _wait_for_event(self):

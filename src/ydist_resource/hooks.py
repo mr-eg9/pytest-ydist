@@ -41,12 +41,17 @@ def pytest_ydist_resource_collection_id_from_test_item(item: pytest.Item) -> typ
 def pytest_ydist_resource_tokens_from_test_item(
     item: pytest.Item,
     tokens: set[types.Token],
-) -> set[types.Token] | None:
+) -> set[types.Token] | types.ResourcesNotAvailable | None:
     """Determine a set of `ResourceToken` items that would fullfill the requirements of `test_item`.
 
     NOTE: `tokens` **must not** be modified by this function.
     NOTE: This function may be called repeatedly for the same `test_item` so some degree of
         memoization is recommended for optimal performance.
+
+    :return:
+        - The set of resources if resources were requested
+        - An emtpy set if no relevant resources were request
+        - None if the requested resources were not available
     """
     ...
 

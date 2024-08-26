@@ -39,6 +39,28 @@ class RunTestsWithTokens(ydist_types.Command):
         return data
 
 
+@dataclass
+class ReleaseTokens(ydist_types.Command):
+    tokens: set[types.Token]
+
+    @classmethod
+    def from_serializable(cls, data: dict) -> Self:
+        tokens = set()
+        for token_data in data.pop('tokens'):
+            kind = token_data.pop('kind')
+            token_cls = types._token_types[kind]
+            tokens.add(token_cls(**token_data))
+        data['tokens'] = tokens
+        return super().from_serializable(data)
+
+    def to_serializable(self) -> dict:
+        data = super().to_serializable()
+        data['tokens'] = [
+            {'kind': token.__class__.__qualname__, **token.to_serializable()}
+            for token in self.tokens
+        ]
+        return data
+
 @pytest.hookimpl()
 def pytest_ydist_register_commands() -> list[type[ydist_types.Command]]:
-    return [RunTestsWithTokens]
+    return [RunTestsWithTokens, ReleaseTokens]

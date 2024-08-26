@@ -11,6 +11,11 @@ class RunTests(Command):
 
 
 @dataclass
+class RunPendingTest(Command):
+    pass
+
+
+@dataclass
 class ShutdownWorker(Command):
     pass
 
@@ -18,6 +23,7 @@ class ShutdownWorker(Command):
 # All commands that are part of ydist
 pytest_ydist_commands = {
     RunTests,
+    RunPendingTest,
     ShutdownWorker,
 }
 

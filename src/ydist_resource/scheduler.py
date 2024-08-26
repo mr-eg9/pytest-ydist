@@ -45,13 +45,13 @@ class Scheduler(ydist_types.Scheduler):
                 del self.assigned_tokens_by_worker_id[event.worker_id]
                 remaining_commands = self.schedule_tracker.remove_worker(event.worker_id)
                 match remaining_commands:
-                    case [ydist_commands.ShutdownWorker]:
+                    case [ydist_commands.ShutdownWorker()]:
                         pass
                     case []:
                         pass
                     case _:
                         # TODO: Add better error handling
-                        raise RuntimeError('Worker unexpectedly shut down while there were remaining items')
+                        raise RuntimeError(f'Worker unexpectedly shut down while there were remaining items: {remaining_commands}')
                 return False
             case ydist_events.CommandChangedStatus():
                 if event.worker_id not in self.schedule_tracker.worker_ids():
@@ -71,42 +71,81 @@ class Scheduler(ydist_types.Scheduler):
                 return True
             case ydist_events.TestComplete():
                 # TODO: Track tests that have been executed, in case a command fails to complete
+                # print(f'test {self.items[event.test_idx].name} completed on worker {event.worker_id}')
                 pass
 
         return False
 
 
     def reschedule(self) -> ydist_types.Schedule:
-        # TODO: Change scheduling to:
-        #  1. Ensure all workers have 1 item
-        #  2. Ensure all workers have 2 items
-        #  3. <...>
-        #  Also remember to optimize, so that workers can be reassigned tasks they can run
-        #   with the items allready allocated (if any)
         schedule = ydist_types.Schedule()
 
-        all_idle = True
+        unschedulable_workers = set()
+        schedulable_workers = set(self.schedule_tracker.worker_ids())
+        for i in range(3):
+            unschedulable_workers.update(self._schedule_pass(schedule, 0, schedulable_workers))
+            schedulable_workers -= unschedulable_workers
 
-        for worker_id in self.schedule_tracker.worker_ids():
-            command_count = len(self.schedule_tracker.get_commands(worker_id))
-            if command_count > 0:
-                all_idle = False
-
-            for collection_ids in list(self.remaining_item_idx_by_collection_ids.keys()):
-                if command_count < 1:
-                    tokens = self._get_token_set_to_use_for_collection_ids(
-                        collection_ids,
-                        self.available_tokens,
-                    )
-                    if tokens is not None:
-                        self._schedule_tests_with_resources(schedule, worker_id, collection_ids, tokens)
-                        command_count += 1
-
+        all_idle = len(unschedulable_workers) == len(list(self.schedule_tracker.worker_ids()))
         if all_idle and len(self.remaining_item_idx_by_collection_ids) == 0:
-            for worker_id in self.schedule_tracker.worker_ids():
-                self.schedule_tracker.schedule_command(schedule, worker_id, ydist_commands.ShutdownWorker)
+            self._schedule_worker_shutdowns(schedule)
 
         return schedule
+
+    def _schedule_pass(self, schedule: ydist_types.Schedule, depth: int, worker_ids: set[ydist_types.WorkerId]):
+        valid_worker_ids_at_depth = set()
+        unscheduable_workers = set()
+        scheduled_workers = set()
+        for worker_id in worker_ids:
+            worker_commands = self.schedule_tracker.get_commands(worker_id)
+            if len(worker_commands) != depth:
+                continue
+            valid_worker_ids_at_depth.add(worker_id)
+
+        # If a resource set _can_ be assigned to a worker at this depth, then do so
+        for worker_id in valid_worker_ids_at_depth:
+            runnable = self._find_runnable_collection_ids(
+                {*self.available_tokens, *self.assigned_tokens_by_worker_id[worker_id]}
+            )
+            if runnable is None:
+                unscheduable_workers.add(worker_id)
+            else:
+                collection_ids, tokens = runnable
+                scheduled_workers.add(worker_id)
+                self._schedule_tests_with_resources(schedule, worker_id, collection_ids, tokens)
+        valid_worker_ids_at_depth -= scheduled_workers
+
+        # If at depth 0, and we cannot assign any more tests to the existing workers, then
+        #  we should ask them to release their current resources if they have any, this is required
+        #  to avoid deadlocks
+        if depth == 0:
+            for worker_id in valid_worker_ids_at_depth:
+                tokens = {token for token in self.assigned_tokens_by_worker_id[worker_id]}
+                if len(tokens) == 0:
+                    continue
+                self.schedule_tracker.schedule_command(
+                    schedule,
+                    worker_id,
+                    commands.ReleaseTokens,
+                    tokens
+                )
+
+        return unscheduable_workers
+
+    def _schedule_worker_shutdowns(self, schedule: ydist_types.Schedule):
+        for worker_id in self.schedule_tracker.worker_ids():
+            worker_commands = self.schedule_tracker.get_commands(worker_id)
+            if len(worker_commands) == 0:
+                self.schedule_tracker.schedule_command(schedule, worker_id, ydist_commands.ShutdownWorker)
+
+    def _find_runnable_collection_ids(self, available_tokens):
+        for collection_ids in self.remaining_item_idx_by_collection_ids.keys():
+            tokens = self._get_token_set_to_use_for_collection_ids(
+                collection_ids,
+                available_tokens,
+            )
+            if tokens is not None:
+                return collection_ids, tokens
 
     def _check_all_tests_are_runnable(self):
         for collection_ids in self.remaining_item_idx_by_collection_ids:
@@ -148,7 +187,7 @@ class Scheduler(ydist_types.Scheduler):
             tokens=tokens,
         )
 
-        if any(token_set is None for token_set in token_sets):
+        if any(token_set is types.ResourcesNotAvailable for token_set in token_sets):
             return None
 
         token_set_to_use = set()

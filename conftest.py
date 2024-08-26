@@ -34,22 +34,22 @@ def pytest_ydist_resource_collection_id_from_test_item(item: pytest.Item) -> yr_
 def pytest_ydist_resource_tokens_from_test_item(
     item: pytest.Item,
     tokens: set[yr_types.Token],
-) -> set[yr_types.Token] | None:
+) -> set[yr_types.Token] | type[yr_types.ResourcesNotAvailable]:
 
     selected_tokens = set()
     if 'foo' in item.name:
         if foo_token not in tokens:
-            return None
+            return yr_types.ResourcesNotAvailable
         selected_tokens.add(foo_token)
 
-    if 'bar' in item.name and bar_token in tokens:
-        selected_tokens.add(bar_token)
+    if 'bar' in item.name:
         if bar_token not in tokens:
-            return None
+            return yr_types.ResourcesNotAvailable
+        selected_tokens.add(bar_token)
 
-    if 'baz' in item.name and baz_token in tokens:
-        selected_tokens.add(baz_token)
+    if 'baz' in item.name:
         if baz_token not in tokens:
-            return None
+            return yr_types.ResourcesNotAvailable
+        selected_tokens.add(baz_token)
 
-    return tokens
+    return selected_tokens
