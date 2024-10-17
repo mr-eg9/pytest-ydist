@@ -31,6 +31,14 @@ class Session:
 
         This procedure forms the backbone of the concurrency model here.
         """
+        if session.testsfailed and not session.config.option.continue_on_collection_errors:
+            raise session.Interrupted(
+                "%d error%s during collection"
+                % (session.testsfailed, "s" if session.testsfailed != 1 else "")
+            )
+
+        if session.config.option.collectonly:
+            return True
 
         config: pytest.Config = session.config
         workers: dict[WorkerId, Worker] = {}
