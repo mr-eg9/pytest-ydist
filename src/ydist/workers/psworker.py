@@ -259,7 +259,9 @@ class WorkerProccess:
             case commands.RunTests():
                 self._exec_run_tests(command)
             case commands.RunPendingTest():
-                assert self.pending_test is not None, 'Tried to run the pending test, but this test does not exist'
+                # assert self.pending_test is not None, 'Tried to run the pending test, but this test does not exist'
+                if self.pending_test is None:
+                    return
                 self._exec_test(self.pending_test, None)
                 self.pending_test = None
 

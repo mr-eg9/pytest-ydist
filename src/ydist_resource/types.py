@@ -33,6 +33,6 @@ class ResourcesNotAvailable:
     """Sentinel type used to indicate that the requested resources are not available."""
     pass
 
-@pytest.hookspec
+@pytest.hookimpl()
 def pytest_ydist_resource_register_tokens() -> list[type[Token]]:
     return [Token]

@@ -15,7 +15,6 @@ class ResourceWorkerPlugin:
     def __init__(self, config):
         self.tokens = set()
         self.config = config
-        self._ydist_worker_plugin = None
 
     @pytest.hookimpl
     def pytest_worker_handle_command(
@@ -29,8 +28,15 @@ class ResourceWorkerPlugin:
                 # print(f'Test {command.run_test_command.tests}: {command.tokens}')
                 run_test_command = command.run_test_command
 
-                # Execute the first test with the resources we currently have
-                self._exec_first_test(config, run_test_command, event_sender)
+                if command.tokens != self.tokens:
+                    # Execute the pending test, to ensure all fixtures are torn down
+                    # This is a workaround for the fact that we cannot invalidate the
+                    #  `ydist_resources` fixture, and so cannot re-create all fixtures downstream
+                    #  of `ydist_resources`
+                    self._exec_pending_test(config, command.worker_id, event_sender)
+                else:
+                    # Execute the first test with the resources we currently have
+                    self._exec_first_test(config, run_test_command, event_sender)
 
                 # Update the tokens currently in use by this worker
                 self._update_tokens(command.tokens, event_sender, command.worker_id)
@@ -45,16 +51,8 @@ class ResourceWorkerPlugin:
                 tokens_to_keep = self.tokens.difference(command.tokens)
 
                 # Execute the pending test
+                self._exec_pending_test(config, command.worker_id, event_sender)
 
-                config.hook.pytest_worker_handle_command(
-                    config=config,
-                    command=ydist_commands.RunPendingTest(
-                        None,
-                        command.worker_id,
-                        ydist_types.CommandStatus.InProgress
-                    ),
-                    event_sender=event_sender,
-                )
                 self._update_tokens(tokens_to_keep, event_sender, command.worker_id)
 
     @staticmethod
@@ -71,6 +69,18 @@ class ResourceWorkerPlugin:
             event_sender=event_sender,
         )
 
+    @staticmethod
+    def _exec_pending_test(config, worker_id, event_sender):
+        config.hook.pytest_worker_handle_command(
+            config=config,
+            command=ydist_commands.RunPendingTest(
+                None,
+                worker_id,
+                ydist_types.CommandStatus.InProgress
+            ),
+            event_sender=event_sender,
+        )
+
     def _update_tokens(
         self,
         new_tokens: set[types.Token],
@@ -82,6 +92,6 @@ class ResourceWorkerPlugin:
         if len(tokens_to_release) > 0:
             event_sender.send(events.TokensReleased(worker_id, tokens_to_release))
 
-    @pytest.fixture
+    @pytest.fixture(scope='session')
     def ydist_resources(self) -> set[types.Token]:
         return self.tokens
