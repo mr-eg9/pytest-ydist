@@ -90,9 +90,13 @@ class ProccessWorker(Worker):
                 self.config.hook.pytest_runtest_logfinish(nodeid=event.nodeid, location=event.location)
             case events.RuntestLogreport():
                 report = self.config.hook.pytest_report_from_serializable(config=self.config, data=event.report)
+                if isinstance(getattr(report, 'longrepr', None), list):
+                    report.longrepr = tuple(report.longrepr)
                 self.config.hook.pytest_runtest_logreport(report=report)
             case events.RuntestCollectreport():
                 report = self.config.hook.pytest_report_from_serializable(config=self.config, data=event.report)
+                if isinstance(getattr(report, 'longrepr', None), list):
+                    report.longrepr = tuple(report.longrepr)
                 self.config.hook.pytest_collectreport(report=report)
             case events.RuntestWarningRecorded():
                 try:
