@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import dataclasses
 
 import pytest
 
@@ -100,11 +101,8 @@ class ProccessWorker(Worker):
                 self.config.hook.pytest_collectreport(report=report)
             case events.RuntestWarningRecorded():
                 try:
-                    category_qualname = event.warning_message.category
-                    mod_qualname, cls = category_qualname.rsplit('.', 1)
-                    package, module = mod_qualname.rsplit('.', 1)
-                    mod = importlib.import_module(module, package)
-                    category: Type[Warning] = getattr(mod, cls)
+                    mod = importlib.import_module(event.warning_message.cls_module)
+                    category: Type[Warning] = getattr(mod, event.warning_message.cls_name)
                 except ImportError:
                     category = Warning
                 warning_message = warnings.WarningMessage(
@@ -113,12 +111,13 @@ class ProccessWorker(Worker):
                     event.warning_message.filename,
                     event.warning_message.lineno
                 )
-                self.config.hook.pytest_runtest_warning_recorded(
-                    warning_message,
-                    event.when,
-                    event.nodeid,
-                    event.location
-                )
+                warning_recorded_kwargs = {
+                    'warning_message': warning_message,
+                    'when': event.when,
+                    'nodeid': event.nodeid,
+                    'location': event.location
+                }
+                self.config.hook.pytest_warning_recorded.call_historic(kwargs=warning_recorded_kwargs)
 
 
 class EventReceiver(threading.Thread):
@@ -365,9 +364,10 @@ class WorkerProccess:
         nodeid: str,
         location: tuple[str, int, str] | None,
     ) -> None:
-        warning_message_ser = events.SerializedWarningMessage(
+        warning_message_ser = events.SerializableWarningMessage(
             str(warning_message.message),
-            warning_message.category.__qualname__,
+            warning_message.__module__,
+            warning_message.__class__.__name__,
             warning_message.filename,
             warning_message.lineno,
             str(warning_message.source),

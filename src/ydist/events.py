@@ -73,15 +73,21 @@ class RuntestCollectreport(Event):
 
 @dataclass
 class RuntestWarningRecorded(Event):
-    warning_message: SerializedWarningMessage
+    warning_message: SerializableWarningMessage
     when: str
     nodeid: str
     location: tuple[str, int, str] | None
 
+    @classmethod
+    def from_serializable(cls, data: dict) -> Self:
+        data['warning_message'] = SerializableWarningMessage(**data['warning_message'])
+        return cls(**data)
+
 @dataclass
-class SerializedWarningMessage:
+class SerializableWarningMessage:
     message: str
-    category: str # I believe this is actuall the `__class__` of the warning, might need to remake this
+    cls_module: str
+    cls_name: str
     filename: str
     lineno: int
     source: str

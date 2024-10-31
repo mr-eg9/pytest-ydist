@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-
 from ydist_resource import types as yr_types
-
 
 foo_token = yr_types.Token('fool')
 bar_token = yr_types.Token('barista')
