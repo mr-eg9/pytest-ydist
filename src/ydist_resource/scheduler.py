@@ -148,13 +148,39 @@ class Scheduler(ydist_types.Scheduler):
                 return collection_ids, tokens
 
     def _check_all_tests_are_runnable(self):
+        unrunnable_collection_ids = []
         for collection_ids in self.remaining_item_idx_by_collection_ids:
-            test_idx = self.remaining_item_idx_by_collection_ids[collection_ids]
             tokens = self._get_token_set_to_use_for_collection_ids(
                 collection_ids,
                 self.all_tokens,
             )
-            assert tokens is not None, f'Failed to resolve resource requirements for test {test_idx[0]}'
+            if tokens is None:
+                unrunnable_collection_ids.append(collection_ids)
+
+        for collection_ids in unrunnable_collection_ids:
+            test_idx = self.remaining_item_idx_by_collection_ids[collection_ids]
+            match self.config.getvalue('on_missing_resource'):
+                case 'crash':
+                    raise RuntimeError(f'Failed to resolve resource requirements for test {test_idx[0]}')
+                case 'fail':
+                    self._fake_run_all_tests_with_collection_ids(collection_ids, self.run_pytest_fail)
+                case 'skip':
+                    self._fake_run_all_tests_with_collection_ids(collection_ids, self.run_pytest_skip)
+
+    def _fake_run_all_tests_with_collection_ids(self, collection_ids, run_fn):
+        call_info = pytest.CallInfo.from_call(run_fn, 'setup')
+        item_idxs = self.remaining_item_idx_by_collection_ids.pop(collection_ids)
+        for item_idx in item_idxs:
+            report = self.config.hook.pytest_runtest_makereport(item=self.items[item_idx], call=call_info)
+            self.config.hook.pytest_runtest_logreport(report=report)
+
+    @staticmethod
+    def run_pytest_skip():
+        pytest.skip("Skipped due to missing resources (--on-missing-resources=skip)")
+
+    @staticmethod
+    def run_pytest_fail():
+        pytest.fail("Failed due to missing resources (--on-missing-resources=fail)")
 
     def _schedule_tests_with_resources(
         self,

@@ -21,6 +21,19 @@ from ydist_resource.types import (
     pytest_ydist_resource_register_tokens,
 )
 
+@pytest.hookimpl
+def pytest_addoption(parser: pytest.Parser) -> None:
+    group = parser.getgroup('ydist', 'distributed testing')
+    group.addoption(
+        '--on-missing-resource',
+        dest='on_missing_resource',
+        type=str,
+        choices=['crash', 'fail', 'skip'],
+        default='fail',
+        action='store',
+        help='Determine how ydist-resource will react to a test if the system does not have the required resource(s)'
+    )
+
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config):
     if config.getvalue('ydist_worker_addr'):
