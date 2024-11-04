@@ -46,14 +46,25 @@ class Session:
         config: pytest.Config = session.config
         workers: dict[WorkerId, Worker] = {}
 
-        for _ in range(self.numworkers):
-            self._add_new_worker(config, workers, session)
+        try:
+            for _ in range(self.numworkers):
+                self._add_new_worker(config, workers, session)
 
-        scheduler = self._setup_scheduler(config, session)
-        # Handle initial `WorkerCreated` events
-        while len(self.ready_workers) < self.numworkers:
-            self.handle_events(config, workers, scheduler)
+            scheduler = self._setup_scheduler(config, session)
 
+            # Handle initial `WorkerCreated` events
+            while len(self.ready_workers) < self.numworkers:
+                self.handle_events(config, workers, scheduler)
+
+            self._pytest_ydist_main_loop(config, workers, scheduler)
+        except Exception as e:
+            for worker in workers.values():
+                worker.terminate()
+            raise e
+
+        return True
+
+    def _pytest_ydist_main_loop(self, config, workers, scheduler):
         should_reschedule = True
 
         while not scheduler.is_done():
@@ -65,8 +76,6 @@ class Session:
             self._wait_for_event()
             should_reschedule |= self.handle_events(config, workers, scheduler)
             should_reschedule |= self._is_all_workers_idle(workers)
-
-        return True
 
     @pytest.hookimpl
     def pytest_session_handle_event(self, config: pytest.Config, event: Event):
@@ -121,8 +130,6 @@ class Session:
         all_idle = self._is_all_workers_idle(workers)
         schedule = scheduler.reschedule()
         if all_idle and len(schedule.new_commands) == 0:
-            for worker in workers.values():
-                worker.terminate()
             raise RuntimeError('Deadlock, due to no items scheduled when all workers idle')
         return schedule
 
