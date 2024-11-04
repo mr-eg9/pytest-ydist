@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import dataclasses
 
 import pytest
+import os
 
 from typing import Any, Generator, Type
 from collections import deque
@@ -58,7 +59,13 @@ class ProccessWorker(Worker):
             json_data = self.json_encoder.encode(command_data)
         except TypeError as e:
             raise TypeError(f'Failed to turn {command} into a serializable object') from e
-        self.conn.send(bytes(json_data, 'utf-8'))
+        if isinstance(command, commands.ShutdownWorker):
+            try:
+                self.conn.send(bytes(json_data, 'utf-8'))
+            except Exception:
+                pass
+        else:
+            self.conn.send(bytes(json_data, 'utf-8'))
         self.submitted_commands += 1
 
     def submit_new_metacommand(self, metacommand: WorkerMetaCommand):
@@ -161,7 +168,7 @@ class EventReceiver(threading.Thread):
             except json.JSONDecodeError:
                 try:
                     new_data = self.conn.recv(1024)
-                except ConnectionResetError:
+                except (ConnectionResetError, OSError):
                     return None
                 if new_data == b'':
                     return None
@@ -314,7 +321,7 @@ class WorkerProccess:
         except json.JSONDecodeError:
             try:
                 new_data = self.conn.recv(1024)
-            except ConnectionResetError:
+            except (ConnectionResetError, OSError):
                 return None
             if new_data == b'':
                 return None
@@ -334,7 +341,10 @@ class WorkerProccess:
     @pytest.hookimpl(hookwrapper=True)
     def pytest_sessionfinish(self, exitstatus: int) -> Generator[None, object, None]:
         yield
-        self._send_event(events.SessionFinish, exitstatus=exitstatus)
+        try:
+            self._send_event(events.SessionFinish, exitstatus=exitstatus)
+        except (ConnectionResetError, OSError):
+            pass
 
     @pytest.hookimpl
     def pytest_collection(self) -> None:

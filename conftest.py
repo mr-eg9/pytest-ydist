@@ -35,7 +35,6 @@ def pytest_ydist_resource_tokens_from_test_item(
     item: pytest.Item,
     tokens: set[yr_types.Token],
 ) -> set[yr_types.Token] | type[yr_types.ResourcesNotAvailable]:
-
     selected_tokens = set()
     if 'foo' in item.name:
         if foo_token not in tokens:
