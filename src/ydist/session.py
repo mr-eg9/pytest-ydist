@@ -11,11 +11,11 @@ from threading import Event as MpEvent
 
 class Session:
     """The `Session` instance used by this plugin"""
-    def __init__(self, config):
+    def __init__(self, config: pytest.Config):
 
-        match (numworkers := config.getvalue('numworkers')):
+        match (numworkers := config.getoption('numworkers', 'auto')):  # type: ignore
             case 'auto' | None: self.numworkers = 8
-            case _: self.numworkers = int(numworkers)
+            case _: self.numworkers = int(numworkers)  # type: ignore
 
         if self.numworkers == 0:
             raise ValueError('--numworkers cannot be 0')
@@ -24,6 +24,7 @@ class Session:
         self.next_worker_id = WorkerId(0)
         self.worker_destroy_queue = deque()
         self.ready_workers = set()
+        self.enabled = True
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtestloop(self, session: pytest.Session):
@@ -31,6 +32,8 @@ class Session:
 
         This procedure forms the backbone of the concurrency model here.
         """
+        if not self.enabled:
+            return None
         if session.testsfailed and not session.config.option.continue_on_collection_errors:
             raise session.Interrupted(
                 "%d error%s during collection"
