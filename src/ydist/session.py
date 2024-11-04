@@ -11,7 +11,7 @@ from threading import Event as MpEvent
 
 class Session:
     """The `Session` instance used by this plugin"""
-    def __init__(self, config: pytest.Config):
+    def __init__(self, config: pytest.Config, enabled: bool):
 
         match (numworkers := config.getoption('numworkers', 'auto')):  # type: ignore
             case 'auto' | None: self.numworkers = 8
@@ -24,7 +24,7 @@ class Session:
         self.next_worker_id = WorkerId(0)
         self.worker_destroy_queue = deque()
         self.ready_workers = set()
-        self.enabled = True
+        self.enabled = enabled
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtestloop(self, session: pytest.Session):

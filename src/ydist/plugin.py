@@ -69,12 +69,13 @@ def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
 
 
 @pytest.hookimpl(trylast=True)
-def pytest_configure(config):
+def pytest_configure(config: pytest.Config):
     if config.getvalue('ydist_worker_addr'):
         session = WorkerProccess(config)
         config.pluginmanager.register(session, 'pytest_ydist_worker_session')
     else:
-        session = Session(config)
+        enabled = config.getvalue('numworkers') is not None
+        session = Session(config, enabled)
         config.pluginmanager.register(session, 'pytest_ydist_main_session')
 
 
