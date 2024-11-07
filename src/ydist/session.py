@@ -13,7 +13,7 @@ class Session:
     """The `Session` instance used by this plugin"""
     def __init__(self, config: pytest.Config, enabled: bool):
 
-        match (numworkers := config.getoption('numworkers', 'auto')):  # type: ignore
+        match (numworkers := config.getoption('ydist_numworkers', 'auto')):  # type: ignore
             case 'auto' | None: self.numworkers = 8
             case _: self.numworkers = int(numworkers)  # type: ignore
 

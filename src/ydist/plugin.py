@@ -25,12 +25,12 @@ from ydist.metacommands import (
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup('ydist', 'distributed testing')
     group._addoption(
-        '--numworkers',
-        '-n',
-        dest='numworkers',
-        type=str,
+        '--ydist-numworkers',
+        dest='ydist_numworkers',
+        type=int,
+        default=0,
         action='store',
-        help='Defines how many workers should be created for parallel test execution'
+        help='Defines how many workers should be created for parallel test execution. If 0, then ydist is disabled.'
     )
     group._addoption(
         '--ydist-worker',
@@ -87,7 +87,7 @@ def pytest_configure(config: pytest.Config):
         session = WorkerProccess(config)
         config.pluginmanager.register(session, 'pytest_ydist_worker_session')
     else:
-        enabled = config.getvalue('numworkers') is not None
+        enabled = config.getvalue('ydist_numworkers') > 0  # type: ignore
         session = Session(config, enabled)
         config.pluginmanager.register(session, 'pytest_ydist_main_session')
 
