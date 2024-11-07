@@ -13,12 +13,9 @@ class Session:
     """The `Session` instance used by this plugin"""
     def __init__(self, config: pytest.Config, enabled: bool):
 
-        match (numworkers := config.getoption('ydist_numworkers', 'auto')):  # type: ignore
-            case 'auto' | None: self.numworkers = 8
-            case _: self.numworkers = int(numworkers)  # type: ignore
-
-        if self.numworkers == 0:
-            raise ValueError('--numworkers cannot be 0')
+        self.numworkers: int = config.getoption('ydist_numworkers', 'auto')  # type: ignore
+        if self.numworkers == 0 and enabled:
+            raise ValueError('--ydist-numworkers cannot be 0 while ydist is still enabled')
 
         self.has_events = MpEvent()
         self.next_worker_id = WorkerId(0)
