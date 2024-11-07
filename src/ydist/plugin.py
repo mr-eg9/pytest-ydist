@@ -1,4 +1,5 @@
 import pytest
+import os
 
 from ydist.session import Session
 from ydist.workers.psworker import WorkerProccess
@@ -66,6 +67,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @pytest.hookimpl
 def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
     pluginmanager.add_hookspecs(hooks)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_cmdline_main(config):
+    # We need to do this patching before `pytest_configure` runs for any plugins,
+    #  as many plugins change behavior in `pytest_configure` if they are in a xdist-worker
+    worker_id: str = config.getvalue('ydist_worker_id')  # type: ignore
+    if worker_id is not None:
+        config.workerinput = {}  # type: ignore
+        os.environ['PYTEST_XDIST_WORKER'] = str(worker_id)
+
+    yield
 
 
 @pytest.hookimpl(trylast=True)
